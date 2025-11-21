@@ -31,7 +31,8 @@ def file_to_generative_part(uploaded_file):
         }
     }, mime_type
 
-def call_gemini_api(contents, system_instruction, api_key):
+# GÜNCELLEME: 'parts_list' adını kullandık ve payload yapısını düzelttik
+def call_gemini_api(parts_list, system_instruction, api_key):
     """
     Gemini API'ye istek gönderir ve yanıtı işler.
     
@@ -41,8 +42,13 @@ def call_gemini_api(contents, system_instruction, api_key):
         # API anahtarı secrets'tan alınamazsa bu hatayı fırlatır
         raise ValueError("API Anahtarı bulunamadı. Lütfen `secrets.toml` dosyanızda anahtarınızın doğru tanımlandığından emin olun.")
 
+    # FIX: Multimodal istekler için doğru JSON yapısı (contents > [turn] > parts > [image, text])
     payload = {
-        "contents": contents,
+        "contents": [
+            {
+                "parts": parts_list # image_part ve user_query'nin bulunduğu liste buraya gelir
+            }
+        ],
         "systemInstruction": {
             "parts": [{"text": system_instruction}]
         },
@@ -83,7 +89,8 @@ def call_gemini_api(contents, system_instruction, api_key):
             st.warning("Lütfen `secrets.toml` dosyasındaki API anahtarınızın doğru ve aktif olduğundan emin olun.")
         elif status_code == 400:
              st.error("❌ API Hatası 400 (Geçersiz İstek)")
-             st.warning("Yüklediğiniz dosya türü veya formatı desteklenmiyor olabilir ya da istek formatı hatalıdır.")
+             # Hata detayı zaten resimdeki gibi gösterilecek, ek uyarıyı kaldırabiliriz.
+             pass 
         else:
             st.error(f"❌ HTTP Hatası {status_code}: İstek başarısız oldu.")
         
@@ -130,7 +137,7 @@ st.title("🍲 Akıllı Mutfak Asistanı")
 st.markdown("Yapay Zeka ile Yemek Tarifleri Keşfedin ve Dolabınızı Yönetin.")
 
 # ==============================================================================
-# GÜNCELLENEN KISIM: API ANAHTARINI SECRETS'TEN ALMA VE ESNEK KONTROL
+# API ANAHTARINI SECRETS'TEN ALMA VE ESNEK KONTROL
 # ==============================================================================
 
 # 1. Önerilen basit adı (GEMINI_API_KEY) kontrol et.
@@ -185,13 +192,14 @@ with tab_recipe:
                     
                     user_query = f"Bu pişmiş bir yemeğin fotoğrafı. Lütfen tam tarifi, gerekli malzemelerin alışveriş listesini (temel mutfak malzemeleri hariç, örneğin su, tuz, karabiber, sirke, temel yağlar gibi) ve tahmini besin değerlerini (Kalori, Yağ, Protein, Şeker, Tuz) **Markdown** formatında net başlıklarla ayırarak sağla. Besin değerleri bölümünde her bir öğeyi ayrı satırda ve sadece sayısal tahmini değerleri (örn: 500 kcal, 20g) belirterek listele."
                     
-                    contents = [
+                    # GÜNCELLEME: call_gemini_api'ye geçirilen parça listesi
+                    parts_list = [
                         image_part,
                         {"text": user_query}
                     ]
 
                     # API Çağrısı
-                    result_text = call_gemini_api(contents, system_prompt, api_key)
+                    result_text = call_gemini_api(parts_list, system_prompt, api_key)
 
                     with col2:
                         st.subheader("Çözümlenen Tarif ve Analiz")
@@ -242,13 +250,14 @@ with tab_fridge:
                     
                     user_query_fridge = f"Bu, buzdolabımdaki veya tezgahımdaki malzemelerin fotoğrafı. Lütfen bu malzemeleri kullanarak yapabileceğim 3 farklı yemek fikri sun. Her yemek için, yemeğin adını, hangi malzemelerin mevcut olduğunu ve tamamlamak için hangi eksik malzemelerin gerektiğini **Markdown** formatında listele."
                     
-                    contents_fridge = [
+                    # GÜNCELLEME: call_gemini_api'ye geçirilen parça listesi
+                    parts_list_fridge = [
                         image_part_fridge,
                         {"text": user_query_fridge}
                     ]
 
                     # API Çağrısı
-                    result_text_fridge = call_gemini_api(contents_fridge, system_prompt_fridge, api_key)
+                    result_text_fridge = call_gemini_api(parts_list_fridge, system_prompt_fridge, api_key)
 
                     with col4:
                         st.subheader("Önerilen Yemekler ve Eksikler")
