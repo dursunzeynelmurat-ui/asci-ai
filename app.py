@@ -32,11 +32,9 @@ def file_to_generative_part(uploaded_file):
 def call_gemini_api(parts_list, system_instruction, api_key):
     """
     Gemini API'ye istek gönderir ve yanıtı işler.
-    
     Bu fonksiyonda artık bekleme mesajı (st.info) gösterilmeyecektir.
     """
     if not api_key:
-        # API anahtarı yoksa bu hatayı fırlatır
         raise ValueError("API Anahtarı bulunamadı.")
 
     # Multimodal istekler için doğru JSON yapısı
@@ -59,7 +57,7 @@ def call_gemini_api(parts_list, system_instruction, api_key):
     full_url = f"{GEMINI_API_URL}?key={api_key}"
     
     try:
-        # İsteği gönder (Streamlit'in otomatik "Running..." göstergesi bu esnada görünecektir)
+        # İsteği gönder
         response = requests.post(full_url, headers=headers, data=json.dumps(payload))
         response.raise_for_status() # 4xx veya 5xx hatalarını HTTPError olarak fırlatır
 
@@ -139,7 +137,7 @@ st.markdown("""
 
 st.title("👨‍🍳 Akıllı Mutfak Asistanınız")
 st.markdown("""
-    Yapay zekanın gücüyle mutfağınızı dönüştürün! Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır ve elinizdeki malzemelerle yaratıcı yemekler önerir. **Yeni: Tariflerinizi anında uyarlayın!**
+    Yapay zekanın gücüyle mutfağınızı dönüştürün! Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır, elinizdeki malzemelerle yaratıcı yemekler önerir ve ölçü birimi çevirileri yapar.
 """)
 
 # ==============================================================================
@@ -159,15 +157,14 @@ if not api_key:
 
 
 # Sekmeler (Yeni sekme eklendi)
-tab_recipe, tab_fridge, tab_adapt = st.tabs(["🍽️ Tarif DEDEKTÖRÜ", "🧊 DOLAP ŞEFİ", "♻️ TARİF UYARLAMA"])
+tab_recipe, tab_fridge, tab_adapt, tab_substitute, tab_converter = st.tabs(["🍽️ Tarif DEDEKTÖRÜ", "🧊 DOLAP ŞEFİ", "♻️ TARİF UYARLAMA", "🔄 MALZEME İKAMESİ", "⚖️ ÖLÇÜ ÇEVİRİCİ"])
 
 # --- 1. Tarif Keşfetme Alanı ---
 with tab_recipe:
     st.header("Yemek Fotoğrafından Tarifi Çözümle")
     st.markdown("Bir tabak yemeğin veya hazırladığınız yemeğin fotoğrafını yükleyin, Yapay Zeka anında tarifi, besin değerlerini ve alışveriş listenizi çıkarsın!")
     
-    # GÜNCELLEME: Kolon oranını [1, 2] olarak değiştirerek giriş alanını küçült
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns([1, 2]) # Giriş alanı 1/3, sonuç alanı 2/3
     
     with col1:
         uploaded_file = st.file_uploader("📸 Yemeğin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="recipe_upload", help="Yemeğinizin net ve aydınlık bir fotoğrafını çekin.")
@@ -176,7 +173,6 @@ with tab_recipe:
         is_recipe_ready = bool(api_key and uploaded_file) 
 
         if uploaded_file is not None:
-            # Önizleme gösteriliyor
             st.image(uploaded_file, caption='Yemek Önizleme', use_column_width=True)
             
         # Eğer hazır değilse, neden hazır olmadığını belirten bir mesaj göster
@@ -196,7 +192,6 @@ with tab_recipe:
                     
                     user_query = f"Bu pişmiş bir yemeğin fotoğrafı. Lütfen tam tarifi, gerekli malzemelerin alışveriş listesini (temel mutfak malzemeleri hariç, örneğin su, tuz, karabiber, sirke, temel yağlar gibi) ve tahmini besin değerlerini (Kalori, Yağ, Protein, Şeker, Tuz) **Markdown** formatında net başlıklarla ayırarak sağla. Besin değerleri bölümünde her bir öğeyi ayrı satırda ve sadece sayısal tahmini değerleri (örn: 500 kcal, 20g) belirterek listele."
                     
-                    # GÜNCELLEME: call_gemini_api'ye geçirilen parça listesi
                     parts_list = [
                         image_part,
                         {"text": user_query}
@@ -208,7 +203,7 @@ with tab_recipe:
                     with col2:
                         st.subheader("✅ Çözümlenen Tarif ve Analiz")
                         if result_text:
-                            # GÜNCELLEME: Cevabı doğrudan Markdown olarak göster
+                            # Cevabı doğrudan Markdown olarak göster
                             st.markdown(result_text)
                             st.session_state['last_recipe_output'] = result_text
                         else:
@@ -221,7 +216,8 @@ with tab_recipe:
     with col2:
         st.subheader("🍽️ Tarif Sonucu")
         with st.container(border=True):
-            if 'result_text' not in st.session_state:
+            # Bu alana varsayılan mesajı göstermek için basit bir kontrol
+            if 'last_recipe_output' not in st.session_state or st.session_state.get('last_recipe_output') == "":
                 st.markdown("""
                     <p class="text-center text-gray-500 italic mt-8">
                         Yüklediğiniz resim analiz edildikten sonra burada bir başlık, malzeme listesi ve besin değerleri görünecektir.
@@ -229,23 +225,16 @@ with tab_recipe:
                         *Afiyet olsun!*
                     </p>
                     """, unsafe_allow_html=True)
-            elif st.session_state.get('last_tab') != 'recipe':
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Yüklediğiniz resim analiz edildikten sonra burada bir başlık, malzeme listesi ve besin değerleri görünecektir.
-                        <br><br>
-                        *Afiyet olsun!*
-                    </p>
-                    """, unsafe_allow_html=True)
-
+            else:
+                 # Eğer bir sonuç zaten varsa, varsayılan mesajı gösterme
+                 pass
 
 # --- 2. Dolap Şefi Alanı ---
 with tab_fridge:
     st.header("Malzeme Fotoğrafından Yemek Önerileri")
     st.markdown("Buzdolabınızdaki veya elinizdeki malzemelerin fotoğrafını yükleyin. AI size o malzemelerle yapabileceğiniz **3 yaratıcı yemek fikri** ve eksik malzemeleri söylesin!")
     
-    # GÜNCELLEME: Kolon oranını [1, 2] olarak değiştirerek giriş alanını küçült
-    col3, col4 = st.columns([1, 2])
+    col3, col4 = st.columns([1, 2]) # Giriş alanı 1/3, sonuç alanı 2/3
     
     with col3:
         uploaded_file_fridge = st.file_uploader("🛒 Malzemelerin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="fridge_upload", help="Elinizdeki malzemeleri bir araya getirip net bir fotoğraf çekin.")
@@ -254,7 +243,6 @@ with tab_fridge:
         is_fridge_ready = bool(api_key and uploaded_file_fridge)
         
         if uploaded_file_fridge is not None:
-            # Önizleme gösteriliyor
             st.image(uploaded_file_fridge, caption='Malzeme Önizleme', use_column_width=True)
 
         # Eğer hazır değilse, neden hazır olmadığını belirten bir mesaj göster
@@ -274,7 +262,6 @@ with tab_fridge:
                     
                     user_query_fridge = f"Bu, buzdolabımdaki veya tezgahımdaki malzemelerin fotoğrafı. Lütfen bu malzemeleri kullanarak yapabileceğim 3 farklı yemek fikri sun. Her yemek için, yemeğin adını, hangi malzemelerin mevcut olduğunu ve tamamlamak için hangi eksik malzemelerin gerektiğini **Markdown** formatında listele."
                     
-                    # GÜNCELLEME: call_gemini_api'ye geçirilen parça listesi
                     parts_list_fridge = [
                         image_part_fridge,
                         {"text": user_query_fridge}
@@ -282,11 +269,11 @@ with tab_fridge:
 
                     # API Çağrısı
                     result_text_fridge = call_gemini_api(parts_list_fridge, system_prompt_fridge, api_key)
+                    st.session_state['last_fridge_output'] = result_text_fridge # Sonucu session state'e kaydet
 
                     with col4:
                         st.subheader("✅ Önerilen Yemekler ve Eksikler")
                         if result_text_fridge:
-                            # GÜNCELLEME: Cevabı doğrudan Markdown olarak göster
                             st.markdown(result_text_fridge)
                         else:
                             st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
@@ -298,7 +285,7 @@ with tab_fridge:
     with col4:
         st.subheader("🧊 Öneri Sonucu")
         with st.container(border=True):
-            if 'result_text_fridge' not in st.session_state:
+            if 'last_fridge_output' not in st.session_state or st.session_state.get('last_fridge_output') == "":
                 st.markdown("""
                     <p class="text-center text-gray-500 italic mt-8">
                         Malzeme fotoğrafınız yüklendikten ve analiz edildikten sonra burada 3 adet yaratıcı yemek fikri ve eksik listesi görünecektir.
@@ -306,16 +293,8 @@ with tab_fridge:
                         *Hemen Mutfağa!*
                     </p>
                     """, unsafe_allow_html=True)
-            elif st.session_state.get('last_tab') != 'fridge':
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Malzeme fotoğrafınız yüklendikten ve analiz edildikten sonra burada 3 adet yaratıcı yemek fikri ve eksik listesi görünecektir.
-                        <br><br>
-                        *Hemen Mutfağa!*
-                    </p>
-                    """, unsafe_allow_html=True)
 
-# --- 3. Tarif Uyarlama Alanı (YENİ ÖZELLİK) ---
+# --- 3. Tarif Uyarlama Alanı ---
 with tab_adapt:
     st.header("Tarif Uyarlama ve Değiştirme")
     st.markdown("Mevcut bir tarifi (yazılı metin olarak) yapay zekaya verin ve beslenme tercihlerinize veya elinizdeki malzemelere göre uyarlamasını isteyin.")
@@ -337,29 +316,175 @@ with tab_adapt:
     )
 
     is_adapt_ready = bool(api_key and recipe_to_adapt and adaptation_request)
+    
+    adapt_col1, adapt_col2 = st.columns([1, 2]) # Çıktı için kolonlar
 
-    if st.button("♻️ Tarifi Uyarlama", key="adapt_recipe_btn", disabled=not is_adapt_ready, use_container_width=True):
-        if is_adapt_ready:
-            try:
-                system_prompt_adapt = "Sen yaratıcı bir şef ve beslenme uzmanısısın. Görevin, verilen tarifi, kullanıcının isteği doğrultusunda mantıklı ve uygulanabilir bir şekilde değiştirmek ve yeni tarifi TAMAMEN Türkçe olarak sunmaktır. Sadece yeni, güncellenmiş tarifi, malzeme ve yapılış aşamalarını Markdown formatında döndür. Giriş/giriş kısmı olmadan doğrudan tarife başla."
-                
-                user_query_adapt = f"Aşağıdaki tarifi, şu isteğe göre uyarlar mısın: '{adaptation_request}'.\n\n--- Orijinal Tarif ---\n{recipe_to_adapt}"
-                
-                # call_gemini_api'ye geçirilen parça listesi (sadece metin)
-                parts_list_adapt = [
-                    {"text": user_query_adapt}
-                ]
+    with adapt_col1:
+        if st.button("♻️ Tarifi Uyarlama", key="adapt_recipe_btn", disabled=not is_adapt_ready, use_container_width=True):
+            if is_adapt_ready:
+                try:
+                    system_prompt_adapt = "Sen yaratıcı bir şef ve beslenme uzmanısısın. Görevin, verilen tarifi, kullanıcının isteği doğrultusunda mantıklı ve uygulanabilir bir şekilde değiştirmek ve yeni tarifi TAMAMEN Türkçe olarak sunmaktır. Sadece yeni, güncellenmiş tarifi, malzeme ve yapılış aşamalarını Markdown formatında döndür. Giriş/giriş kısmı olmadan doğrudan tarife başla."
+                    
+                    user_query_adapt = f"Aşağıdaki tarifi, şu isteğe göre uyarlar mısın: '{adaptation_request}'.\n\n--- Orijinal Tarif ---\n{recipe_to_adapt}"
+                    
+                    parts_list_adapt = [
+                        {"text": user_query_adapt}
+                    ]
 
-                # API Çağrısı
-                result_text_adapt = call_gemini_api(parts_list_adapt, system_prompt_adapt, api_key)
+                    # API Çağrısı
+                    result_text_adapt = call_gemini_api(parts_list_adapt, system_prompt_adapt, api_key)
+                    st.session_state['last_adapt_output'] = result_text_adapt
 
-                st.subheader("✅ Uyarlanmış Yeni Tarif")
-                if result_text_adapt:
-                    st.markdown(result_text_adapt)
-                else:
-                    st.error("Uyarlama başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
+                    
+                except Exception as e:
+                    st.error(f"Genel Hata: {e}")
+            else:
+                st.info("Lütfen hem tarifi hem de değişiklik isteğinizi girin.")
+
+    with adapt_col2:
+        st.subheader("✅ Uyarlanmış Yeni Tarif")
+        with st.container(border=True):
+            if 'last_adapt_output' in st.session_state and st.session_state['last_adapt_output']:
+                st.markdown(st.session_state['last_adapt_output'])
+            else:
+                 st.markdown("""
+                    <p class="text-center text-gray-500 italic mt-8">
+                        Tarif metnini ve değişiklik isteğini girdikten sonra uyarlanmış yeni tarif burada görünecektir.
+                    </p>
+                    """, unsafe_allow_html=True)
+
+
+# --- 4. Malzeme İkamesi Alanı ---
+with tab_substitute:
+    st.header("Malzeme İkamesi Bulucu")
+    st.markdown("Elinizde olmayan veya kullanmak istemediğiniz bir malzeme için en iyi ikameleri, kullanım amaçlarına göre oranlarıyla birlikte öğrenin.")
+
+    col5, col6 = st.columns([1, 2]) # Giriş alanı 1/3, sonuç alanı 2/3
+
+    with col5:
+        ingredient_to_substitute = st.text_input(
+            "Hangi Malzemeyi İkame Etmek İstiyorsunuz?", 
+            key="substitute_ingredient_input",
+            placeholder="Örn: Yumurta, Süt, Buğday Unu, Tereyağı"
+        )
+        
+        context_reason = st.text_input(
+            "İkame Nedeni/Kullanım Amacı (Zorunlu Değil)", 
+            key="substitute_reason_input",
+            placeholder="Örn: Vegan tarif için, daha az yağlı olması için, bağlayıcı olarak"
+        )
+
+        is_substitute_ready = bool(api_key and ingredient_to_substitute)
+
+        if st.button("🔄 İkame Alternatiflerini Bul", key="find_substitute_btn", disabled=not is_substitute_ready, use_container_width=True):
+            if is_substitute_ready:
+                try:
+                    system_prompt_substitute = "Sen mutfak uzmanı bir ikame profesyonelisindir. Görevin, verilen malzeme için en uygun, pratik ve ölçüleri belirten ikame alternatiflerini TAMAMEN Türkçe olarak sunmaktır. Yanıtın, her ikame için neden uygun olduğunu, hangi durumlarda kullanıldığını ve en önemlisi **ikame oranını (Örn: 1:1, 1 yumurta yerine 1/4 fincan elma püresi)** açıkça belirtmelidir. Markdown tablolarını veya listelerini kullan."
+                    
+                    # Kullanıcı neden girdiyse sorguya ekle
+                    reason_text = f"'{context_reason}' amacı/sebebiyle" if context_reason else "genel olarak"
+                    
+                    user_query_substitute = f"Lütfen '{ingredient_to_substitute}' malzemesini, {reason_text} ikame edebileceğim en iyi 3-5 alternatif ve bunların ikame oranlarını tablo formatında veya detaylı liste halinde ver."
+                    
+                    parts_list_substitute = [
+                        {"text": user_query_substitute}
+                    ]
+
+                    # API Çağrısı
+                    result_text_substitute = call_gemini_api(parts_list_substitute, system_prompt_substitute, api_key)
+                    st.session_state['last_substitute_output'] = result_text_substitute
                         
-            except Exception as e:
-                st.error(f"Genel Hata: {e}")
-        else:
-            st.info("Lütfen hem tarifi hem de değişiklik isteğinizi girin.")
+                except Exception as e:
+                    st.error(f"Genel Hata: {e}")
+            else:
+                st.info("Lütfen ikame etmek istediğiniz malzemeyi girin.")
+    
+    with col6:
+        st.subheader("✅ İkame Alternatifleri")
+        with st.container(border=True):
+            if 'last_substitute_output' in st.session_state and st.session_state['last_substitute_output']:
+                st.markdown(st.session_state['last_substitute_output'])
+            else:
+                 st.markdown("""
+                    <p class="text-center text-gray-500 italic mt-8">
+                        Malzemeyi ve ikame nedeninizi girdikten sonra, pratik ve ölçüleriyle birlikte en uygun alternatifler burada listelenecektir.
+                    </p>
+                    """, unsafe_allow_html=True)
+
+# --- 5. Ölçü Çevirici Alanı (YENİ ÖZELLİK) ---
+with tab_converter:
+    st.header("Malzemeye Özel Ölçü Çevirici (Bardak ➡️ Gram)")
+    st.markdown("Hacim (Bardak, kaşık, ml, vb.) ölçülerini, seçtiğiniz malzemeye göre doğru ağırlık (gram/litre) birimine çevirin.")
+
+    col7, col8 = st.columns([1, 2]) # Giriş alanı 1/3, sonuç alanı 2/3
+
+    with col7:
+        # Ağırlık/Miktar Girişi
+        col_amount, col_unit = st.columns([2, 3])
+        with col_amount:
+            amount_input = st.number_input(
+                "Miktar", 
+                min_value=0.01, 
+                value=1.0, 
+                step=0.5,
+                key="convert_amount_input"
+            )
+        
+        # Birim Seçimi
+        with col_unit:
+            unit_select = st.selectbox(
+                "Kaynak Birim",
+                ('Bardak (Cup)', 'Yemek Kaşığı (Tbsp)', 'Çay Kaşığı (tsp)', 'Mililitre (ml)', 'Litre (L)'),
+                key="convert_unit_select"
+            )
+
+        # Malzeme Girişi (En kritik kısım)
+        ingredient_input = st.text_input(
+            "Malzeme (Zorunlu)", 
+            key="convert_ingredient_input",
+            placeholder="Örn: Buğday Unu, Toz Şeker, Su, Zeytinyağı"
+        )
+        
+        # Hedef Birim Seçimi
+        target_unit_select = st.selectbox(
+            "Hedef Birim",
+            ('Gram (g)', 'Kilogram (kg)', 'Mililitre (ml)', 'Litre (L)'),
+            key="convert_target_unit_select"
+        )
+
+        is_converter_ready = bool(api_key and amount_input > 0 and ingredient_input)
+
+        if st.button("⚖️ Hesapla ve Çevir", key="calculate_conversion_btn", disabled=not is_converter_ready, use_container_width=True):
+            if is_converter_ready:
+                try:
+                    system_prompt_converter = "Sen, mutfak ölçü birimleri ve gıda yoğunlukları konusunda uzman, titiz bir asistansın. Görevin, verilen hacim/kütle değerini, birimini, malzemeyi ve hedef birimi dikkate alarak, TAMAMEN Türkçe olarak doğru çeviriyi ve bu çevirinin nedenini veya varsayımlarını (kullanılan yoğunluk değeri gibi) açıklamaktır. Yanıtın yalnızca sonuç ve kısa bir açıklama içermelidir. Sonucu kalın ve büyük yazılarla belirt."
+                    
+                    user_query_converter = (
+                        f"Lütfen '{amount_input} {unit_select}' miktarındaki '{ingredient_input}' malzemesini, "
+                        f"'{target_unit_select}' birimine çevir ve sonucu nedenleriyle birlikte açıkla."
+                    )
+                    
+                    parts_list_converter = [
+                        {"text": user_query_converter}
+                    ]
+
+                    # API Çağrısı
+                    result_text_converter = call_gemini_api(parts_list_converter, system_prompt_converter, api_key)
+                    st.session_state['last_converter_output'] = result_text_converter
+                        
+                except Exception as e:
+                    st.error(f"Genel Hata: {e}")
+            else:
+                st.info("Lütfen çevrilecek miktarı ve malzemeyi eksiksiz girin.")
+    
+    with col8:
+        st.subheader("✅ Hesaplama Sonucu")
+        with st.container(border=True):
+            if 'last_converter_output' in st.session_state and st.session_state['last_converter_output']:
+                st.markdown(st.session_state['last_converter_output'])
+            else:
+                 st.markdown("""
+                    <p class="text-center text-gray-500 italic mt-8">
+                        Miktar, birim ve malzemeyi girdikten sonra, malzemenin yoğunluğuna özel çeviri sonucu burada görünecektir.
+                    </p>
+                    """, unsafe_allow_html=True)
