@@ -38,7 +38,8 @@ def call_gemini_api(contents, system_instruction, api_key):
     401 yetkilendirme hatasını özellikle ele alır.
     """
     if not api_key:
-        raise ValueError("Lütfen Gemini API Anahtarınızı girin.")
+        # API anahtarı secrets'tan alınamazsa bu hatayı fırlatır
+        raise ValueError("API Anahtarı bulunamadı. Lütfen `GEMINI_API_KEY` değerini `secrets.toml` dosyanızda kontrol edin.")
 
     payload = {
         "contents": contents,
@@ -79,7 +80,7 @@ def call_gemini_api(contents, system_instruction, api_key):
         
         if status_code == 401:
             st.error("❌ API Hatası 401 (Yetkilendirme Başarısız)")
-            st.warning("Lütfen girdiğiniz API anahtarının doğru ve aktif olduğundan emin olun.")
+            st.warning("Lütfen `secrets.toml` dosyasındaki API anahtarınızın doğru ve aktif olduğundan emin olun.")
         elif status_code == 400:
              st.error("❌ API Hatası 400 (Geçersiz İstek)")
              st.warning("Yüklediğiniz dosya türü veya formatı desteklenmiyor olabilir ya da istek formatı hatalıdır.")
@@ -128,12 +129,17 @@ st.markdown("""
 st.title("🍲 Akıllı Mutfak Asistanı")
 st.markdown("Yapay Zeka ile Yemek Tarifleri Keşfedin ve Dolabınızı Yönetin.")
 
-# API Anahtarı Girişi 
-api_key = st.text_input(
-    "Gemini API Anahtarınızı Girin:", 
-    type="password", 
-    help="Yetkilendirme için kendi Gemini API anahtarınızı girin. Bu, 401 yetkilendirme sorununu çözecektir."
-)
+# ==============================================================================
+# DEĞİŞİKLİK BURADA: API ANAHTARINI SECRETS'TEN ALMA
+# ==============================================================================
+api_key = st.secrets.get("GEMINI_API_KEY")
+
+# Anahtarın durumunu kontrol et ve kullanıcıya bildir
+if not api_key:
+    st.error("🔑 API Anahtarı Eksik")
+    st.warning("Lütfen Gemini API anahtarınızı `GEMINI_API_KEY` adı altında `.streamlit/secrets.toml` dosyasına ekleyin.")
+# ==============================================================================
+
 
 # Sekmeler
 tab_recipe, tab_fridge = st.tabs(["🍽️ Tarif Keşfet", "🧊 Dolap Şefi"])
@@ -148,38 +154,47 @@ with tab_recipe:
     with col1:
         uploaded_file = st.file_uploader("📸 Yemeğin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="recipe_upload")
         
+        # BUTON KONTROLÜ İÇİN YENİ MANTIK
+        # Buton, ancak hem API key hem de resim yüklendiğinde etkin olur.
+        is_recipe_ready = bool(api_key and uploaded_file) 
+
         if uploaded_file is not None:
             st.image(uploaded_file, caption='Yemek Önizleme', use_column_width=True)
             
-            if st.button("Tarif ve Besin Değerlerini Çıkar", key="generate_recipe_btn", disabled=not api_key):
-                if api_key:
-                    try:
-                        # Gerekli girdileri hazırla
-                        image_part, mime_type = file_to_generative_part(uploaded_file)
-                        
-                        system_prompt = "Sen profesyonel bir aşçı ve beslenme uzmanısın. Görev, resimdeki yemeği en ince ayrıntısına kadar analiz etmek ve TAMAMEN Türkçe olarak, aşağıda belirtilen formatta detaylı bilgi sağlamaktır."
-                        
-                        user_query = f"Bu pişmiş bir yemeğin fotoğrafı. Lütfen tam tarifi, gerekli malzemelerin alışveriş listesini (temel mutfak malzemeleri hariç, örneğin su, tuz, karabiber, sirke, temel yağlar gibi) ve tahmini besin değerlerini (Kalori, Yağ, Protein, Şeker, Tuz) **Markdown** formatında net başlıklarla ayırarak sağla. Besin değerleri bölümünde her bir öğeyi ayrı satırda ve sadece sayısal tahmini değerleri (örn: 500 kcal, 20g) belirterek listele."
-                        
-                        contents = [
-                            image_part,
-                            {"text": user_query}
-                        ]
+        # Eğer hazır değilse, neden hazır olmadığını belirten bir mesaj göster
+        if not is_recipe_ready and api_key: # Sadece resim eksikse uyar
+            if uploaded_file is None:
+                st.warning("Butonu etkinleştirmek için lütfen bir resim yükleyin.")
 
-                        # API Çağrısı
-                        result_text = call_gemini_api(contents, system_prompt, api_key)
 
-                        with col2:
-                            st.subheader("Çözümlenen Tarif ve Analiz")
-                            if result_text:
-                                st.markdown(result_text)
-                            else:
-                                st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
-                                
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-                else:
-                    st.warning("Lütfen API Anahtarınızı girin.")
+        if st.button("Tarif ve Besin Değerlerini Çıkar", key="generate_recipe_btn", disabled=not is_recipe_ready):
+            # API Anahtarı ve Resim Kontrolü başarılıysa devam et
+            if is_recipe_ready:
+                try:
+                    # Gerekli girdileri hazırla
+                    image_part, mime_type = file_to_generative_part(uploaded_file)
+                    
+                    system_prompt = "Sen profesyonel bir aşçı ve beslenme uzmanısın. Görev, resimdeki yemeği en ince ayrıntısına kadar analiz etmek ve TAMAMEN Türkçe olarak, aşağıda belirtilen formatta detaylı bilgi sağlamaktır."
+                    
+                    user_query = f"Bu pişmiş bir yemeğin fotoğrafı. Lütfen tam tarifi, gerekli malzemelerin alışveriş listesini (temel mutfak malzemeleri hariç, örneğin su, tuz, karabiber, sirke, temel yağlar gibi) ve tahmini besin değerlerini (Kalori, Yağ, Protein, Şeker, Tuz) **Markdown** formatında net başlıklarla ayırarak sağla. Besin değerleri bölümünde her bir öğeyi ayrı satırda ve sadece sayısal tahmini değerleri (örn: 500 kcal, 20g) belirterek listele."
+                    
+                    contents = [
+                        image_part,
+                        {"text": user_query}
+                    ]
+
+                    # API Çağrısı
+                    result_text = call_gemini_api(contents, system_prompt, api_key)
+
+                    with col2:
+                        st.subheader("Çözümlenen Tarif ve Analiz")
+                        if result_text:
+                            st.markdown(result_text)
+                        else:
+                            st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
+                            
+                except Exception as e:
+                    st.error(f"Genel Hata: {e}")
 
 
     with col2:
@@ -197,38 +212,46 @@ with tab_fridge:
     with col3:
         uploaded_file_fridge = st.file_uploader("🛒 Malzemelerin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="fridge_upload")
         
+        # BUTON KONTROLÜ İÇİN YENİ MANTIK
+        is_fridge_ready = bool(api_key and uploaded_file_fridge)
+        
         if uploaded_file_fridge is not None:
             st.image(uploaded_file_fridge, caption='Malzeme Önizleme', use_column_width=True)
-            
-            if st.button("Yemek Önerileri Oluştur", key="generate_suggestions_btn", disabled=not api_key):
-                if api_key:
-                    try:
-                        # Gerekli girdileri hazırla
-                        image_part_fridge, mime_type_fridge = file_to_generative_part(uploaded_file_fridge)
-                        
-                        system_prompt_fridge = "Sen yaratıcı bir mutfak şefisin. Görevin, resimdeki malzemeleri en verimli şekilde kullanarak hazırlanabilecek 3 farklı yemek tarifi fikri sunmak. Tüm çıktı TAMAMEN Türkçe olmalıdır."
-                        
-                        user_query_fridge = f"Bu, buzdolabımdaki veya tezgahımdaki malzemelerin fotoğrafı. Lütfen bu malzemeleri kullanarak yapabileceğim 3 farklı yemek fikri sun. Her yemek için, yemeğin adını, hangi malzemelerin mevcut olduğunu ve tamamlamak için hangi eksik malzemelerin gerektiğini **Markdown** formatında listele."
-                        
-                        contents_fridge = [
-                            image_part_fridge,
-                            {"text": user_query_fridge}
-                        ]
 
-                        # API Çağrısı
-                        result_text_fridge = call_gemini_api(contents_fridge, system_prompt_fridge, api_key)
+        # Eğer hazır değilse, neden hazır olmadığını belirten bir mesaj göster
+        if not is_fridge_ready and api_key: # Sadece resim eksikse uyar
+            if uploaded_file_fridge is None:
+                st.warning("Butonu etkinleştirmek için lütfen bir resim yükleyiniz.")
 
-                        with col4:
-                            st.subheader("Önerilen Yemekler ve Eksikler")
-                            if result_text_fridge:
-                                st.markdown(result_text_fridge)
-                            else:
-                                st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
-                                
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-                else:
-                    st.warning("Lütfen API Anahtarınızı girin.")
+
+        if st.button("Yemek Önerileri Oluştur", key="generate_suggestions_btn", disabled=not is_fridge_ready):
+            # API Anahtarı ve Resim Kontrolü başarılıysa devam et
+            if is_fridge_ready:
+                try:
+                    # Gerekli girdileri hazırla
+                    image_part_fridge, mime_type_fridge = file_to_generative_part(uploaded_file_fridge)
+                    
+                    system_prompt_fridge = "Sen yaratıcı bir mutfak şefisin. Görevin, resimdeki malzemeleri en verimli şekilde kullanarak hazırlanabilecek 3 farklı yemek tarifi fikri sunmak. Tüm çıktı TAMAMEN Türkçe olmalıdır."
+                    
+                    user_query_fridge = f"Bu, buzdolabımdaki veya tezgahımdaki malzemelerin fotoğrafı. Lütfen bu malzemeleri kullanarak yapabileceğim 3 farklı yemek fikri sun. Her yemek için, yemeğin adını, hangi malzemelerin mevcut olduğunu ve tamamlamak için hangi eksik malzemelerin gerektiğini **Markdown** formatında listele."
+                    
+                    contents_fridge = [
+                        image_part_fridge,
+                        {"text": user_query_fridge}
+                    ]
+
+                    # API Çağrısı
+                    result_text_fridge = call_gemini_api(contents_fridge, system_prompt_fridge, api_key)
+
+                    with col4:
+                        st.subheader("Önerilen Yemekler ve Eksikler")
+                        if result_text_fridge:
+                            st.markdown(result_text_fridge)
+                        else:
+                            st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
+                            
+                except Exception as e:
+                    st.error(f"Genel Hata: {e}")
 
 
     with col4:
