@@ -141,8 +141,8 @@ PAGES = {
     "🍽️ FOTOĞRAFTAN TARİF": "nav_detector",
     "🔎 TARİF ARAMA": "nav_search", 
     "🧊 DOLAP ŞEFİ": "nav_fridge",
-    "💬 MUTFAK GURUSU": "nav_chat", # YENİ
-    "📊 BESİN ANALİZİ": "nav_nutrition", # YENİ
+    "💬 MUTFAK GURUSU": "nav_chat", 
+    "📊 BESİN ANALİZİ": "nav_nutrition", 
     "📅 MENÜ PLANLAYICI": "nav_menu",
     "🍷 LEZZET EŞLEŞTİRİCİ": "nav_pairing",
     "♻️ TARİF UYARLAMA": "nav_adapt",
@@ -163,12 +163,10 @@ if 'chat_messages' not in st.session_state: st.session_state['chat_messages'] = 
 with st.container():
     st.markdown("### 🚀 Hızlı Menü")
     
-    # Butonları dinamik olarak satırlara bölme
     keys = list(PAGES.keys())
     total_items = len(keys)
-    items_per_row = 8 # Bir satırda kaç buton olsun?
+    items_per_row = 8 
     
-    # Satırları oluştur
     for i in range(0, total_items, items_per_row):
         cols = st.columns(items_per_row)
         batch = keys[i:i + items_per_row]
@@ -300,27 +298,22 @@ elif page == "🧊 DOLAP ŞEFİ":
                                 st.session_state['generated_recipe'] = {'title': clean_title, 'content': full_res}
                                 st.rerun()
 
-# 4. MUTFAK GURUSU (YENİ)
+# 4. MUTFAK GURUSU
 elif page == "💬 MUTFAK GURUSU":
     st.header("💬 Mutfak Gurusu ile Sohbet")
     st.markdown("Aklınıza takılan her şeyi sorabilirsiniz: Püf noktaları, teknikler, kurtarma yöntemleri...")
     
-    # Mesaj geçmişini göster
     for message in st.session_state['chat_messages']:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Kullanıcı girdisi
     if prompt := st.chat_input("Sorunuzu buraya yazın (Örn: Çorba çok tuzlu oldu ne yapmalıyım?)"):
-        # Kullanıcı mesajını ekle
         st.session_state['chat_messages'].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # AI Cevabı
         with st.chat_message("assistant"):
             with st.spinner("Guru düşünüyor..."):
-                # Basit bir geçmiş oluştur (son 5 mesaj)
                 history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state['chat_messages'][-5:]])
                 system_prompt = f"Sen dünyaca ünlü, esprili ve çok bilgili bir mutfak gurususun. Kullanıcının sorularını Türkçe, samimi ve çözüm odaklı yanıtla.\nGeçmiş Konuşma:\n{history_context}"
                 
@@ -332,26 +325,30 @@ elif page == "💬 MUTFAK GURUSU":
                 else:
                     st.error("Bir hata oluştu, lütfen tekrar deneyin.")
 
-# 5. BESİN ANALİZİ (YENİ)
+# 5. BESİN ANALİZİ (FIXED)
 elif page == "📊 BESİN ANALİZİ":
     st.header("📊 Besin Değeri Analizörü")
     st.markdown("Herhangi bir tarifi yapıştırın, yapay zeka besin değerlerini hesaplasın.")
     
     col1, col2 = st.columns([1, 1])
     
-    # Transfer edilen içerik varsa al
     default_text = st.session_state.get('transfer_content', '')
     if default_text and len(default_text) > 50: st.info("Tarif defterinden içerik aktarıldı.")
-    elif default_text: default_text = "" # Çok kısaysa temizle
+    elif default_text: default_text = "" 
 
     with col1:
         recipe_text = st.text_area("Tarif Metni", value=default_text, height=300, placeholder="Tarifi buraya yapıştırın...")
         if st.button("Analiz Et", type="primary", use_container_width=True):
-            with st.spinner("Kaloriler hesaplanıyor..."):
-                prompt = "Bu tarifin 1 porsiyonu için tahmini Kalori (kcal), Protein (g), Karbonhidrat (g) ve Yağ (g) değerlerini hesapla. Ayrıca bu yemeğin ne kadar sağlıklı olduğuna dair 2-3 cümlelik bir yorum yap. Çıktıyı Markdown formatında ver."
-                res = call_gemini_api([{"text": prompt}], "Sen uzman bir diyetisyensin.", api_key)
-                st.session_state['nutri_res'] = res
-                if default_text: st.session_state['transfer_content'] = ""
+            if recipe_text:
+                with st.spinner("Kaloriler hesaplanıyor..."):
+                    # --- HATA DÜZELTMESİ: recipe_text prompt'a eklendi ---
+                    prompt = f"Aşağıdaki tarifin 1 porsiyonu için tahmini Kalori (kcal), Protein (g), Karbonhidrat (g) ve Yağ (g) değerlerini hesapla. Ayrıca bu yemeğin ne kadar sağlıklı olduğuna dair 2-3 cümlelik bir yorum yap. Çıktıyı Markdown formatında ver.\n\n--- TARİF ---\n{recipe_text}"
+                    
+                    res = call_gemini_api([{"text": prompt}], "Sen uzman bir diyetisyensin.", api_key)
+                    st.session_state['nutri_res'] = res
+                    if default_text: st.session_state['transfer_content'] = ""
+            else:
+                st.warning("Lütfen analiz için bir tarif metni girin.")
 
     with col2:
         if 'nutri_res' in st.session_state and st.session_state['nutri_res']:
