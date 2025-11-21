@@ -127,7 +127,7 @@ st.markdown("""
 
 st.title("👨‍🍳 Akıllı Mutfak Asistanınız")
 st.markdown("""
-    Yapay zekanın gücüyle mutfağınızı dönüştürün! Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır, elinizdeki malzemelerle yaratıcı yemekler önerir ve ölçü birimi çevirileri yapar.
+    Yapay zekanın gücüyle mutfağınızı dönüştürün! Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır, elinizdeki malzemelerle yaratıcı yemekler önerir, ölçü birimi çevirileri yapar ve porsiyonları ayarlar.
 """)
 
 # ==============================================================================
@@ -149,11 +149,12 @@ if not api_key:
 # --- Yan Panel (Sidebar) Navigasyonu ---
 st.sidebar.title("🛠️ Mutfak Araçları")
 
-# Sayfa seçenekleri
+# Sayfa seçenekleri (Yeni özellik eklendi)
 PAGES = {
     "🍽️ Tarif DEDEKTÖRÜ": "Yemek Fotoğrafından Tarifi Çözümle",
     "🧊 DOLAP ŞEFİ": "Malzeme Fotoğrafından Yemek Önerileri",
     "♻️ TARİF UYARLAMA": "Tarif Uyarlama ve Değiştirme",
+    "± PORSİYON AYARLAYICI": "Tarif Porsiyonunu Otomatik Hesapla", # Yeni Özellik
     "🔄 MALZEME İKAMESİ": "Malzeme İkamesi Bulucu",
     "⚖️ ÖLÇÜ ÇEVİRİCİ": "Malzemeye Özel Ölçü Çevirici (Hacim 🔄 Ağırlık)"
 }
@@ -195,7 +196,7 @@ if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
                         
                         system_prompt = "Sen profesyonel bir aşçı ve beslenme uzmanısısın. Görev, resimdeki yemeği en ince ayrıntısına kadar analiz etmek ve TAMAMEN Türkçe olarak, aşağıda belirtilen formatta detaylı bilgi sağlamaktır. Yanıtını iyi formatlanmış Markdown başlıkları, kalın metinler ve listeler kullanarak hazırla."
                         
-                        user_query = f"Bu pişmiş bir yemeğin fotoğrafı. Lütfen tam tarifi, gerekli malzemelerin alışveriş listesini (temel mutfak malzemeleri hariç, örneğin su, tuz, karabiber, sirke, temel yağlar gibi) ve tahmini besin değerlerini (Kalori, Yağ, Protein, Şeker, Tuz) **Markdown** formatında net başlıklarla ayırarak sağla. Besin değerleri bölümünde her bir öğeyi ayrı satırda ve sadece sayısal tahmini değerleri (örn: 500 kcal, 20g) belirterek listele."
+                        user_query = f"Bu pişmiş bir yemeğin fotoğrafı. Lütfen tam tarifi, gerekli malzemelerin alışveriş listesini (temel mutfak malzemeleri hariç, örneğin su, tuz, karabiber, sirke, temel yağlar gibi) ve tahmini besin değerlerini (Kalori, Yağ, Protein, Şeker, Tuz) **Markdown** formatında net başlıklarla ayırarak sağla. Besin değerleri bölümünde her bir öğeyi ayrı satırda ve sadece sayısal tahmini değerleri (örn: 500 kcal, 20g) belirterek listele. Lütfen başlangıçtaki porsiyon sayısını belirt."
                         
                         parts_list = [
                             image_part,
@@ -204,11 +205,12 @@ if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
 
                         result_text = call_gemini_api(parts_list, system_prompt, api_key)
 
+                        st.session_state['last_recipe_output'] = result_text
+
                         with col2:
                             st.subheader("✅ Çözümlenen Tarif ve Analiz")
                             if result_text:
                                 st.markdown(result_text)
-                                st.session_state['last_recipe_output'] = result_text
                             else:
                                 st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
                                 
@@ -219,7 +221,9 @@ if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
     with col2:
         st.subheader("🍽️ Tarif Sonucu")
         with st.container(border=True, height=500):
-            if 'last_recipe_output' not in st.session_state or st.session_state.get('last_recipe_output') == "":
+            if 'last_recipe_output' in st.session_state and st.session_state.get('last_recipe_output') != "":
+                st.markdown(st.session_state['last_recipe_output'])
+            else:
                 st.markdown("""
                     <p class="text-center text-gray-500 italic mt-8">
                         Yüklediğiniz resim analiz edildikten sonra burada bir başlık, malzeme listesi ve besin değerleri görünecektir.
@@ -227,9 +231,6 @@ if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
                         *Afiyet olsun!*
                     </p>
                     """, unsafe_allow_html=True)
-            else:
-                 # Sonuç varsa burada gösterilebilir (şu anlık sadece buton içinde gösteriliyor)
-                 pass
 
 
 # --- 2. Dolap Şefi Alanı ---
@@ -283,7 +284,9 @@ elif selected_page == "🧊 DOLAP ŞEFİ":
     with col4:
         st.subheader("🧊 Öneri Sonucu")
         with st.container(border=True, height=500):
-            if 'last_fridge_output' not in st.session_state or st.session_state.get('last_fridge_output') == "":
+            if 'last_fridge_output' in st.session_state and st.session_state.get('last_fridge_output') != "":
+                st.markdown(st.session_state['last_fridge_output'])
+            else:
                 st.markdown("""
                     <p class="text-center text-gray-500 italic mt-8">
                         Malzeme fotoğrafınız yüklendikten ve analiz edildikten sonra burada 3 adet yaratıcı yemek fikri ve eksik listesi görünecektir.
@@ -357,9 +360,83 @@ elif selected_page == "♻️ TARİF UYARLAMA":
                         Tarif metnini ve değişiklik isteğini girdikten sonra uyarlanmış yeni tarif burada görünecektir.
                     </p>
                     """, unsafe_allow_html=True)
+                 
+# --- 4. Porsiyon Ayarlayıcı Alanı (YENİ ÖZELLİK) ---
+elif selected_page == "± PORSİYON AYARLAYICI":
+    st.header(PAGES[selected_page])
+    st.markdown("Bir tarifi mevcut porsiyon sayısıyla birlikte yapıştırın. Yapay zeka, istediğiniz yeni porsiyon sayısına göre tüm malzemeleri ve pişirme talimatlarını otomatik olarak güncellesin.")
+    
+    default_recipe_text = st.session_state.get('last_recipe_output', '') if 'last_recipe_output' in st.session_state else ""
+
+    recipe_to_scale = st.text_area(
+        "Porsiyonu Ayarlanacak Tarif Metni", 
+        height=200, 
+        key="scale_recipe_input", 
+        help="Lütfen tarifin mevcut porsiyon sayısını (örneğin '4 kişilik') içerdiğinden emin olun.",
+        value=default_recipe_text
+    )
+    
+    target_servings = st.number_input(
+        "Yeni Porsiyon Sayısı", 
+        min_value=1, 
+        value=2, 
+        step=1,
+        key="target_servings_input",
+        help="Tarifi kaç kişilik yapmak istiyorsunuz?"
+    )
+
+    is_scale_ready = bool(api_key and recipe_to_scale and target_servings >= 1)
+    
+    scale_col1, scale_col2 = st.columns([1, 2])
+
+    with scale_col1:
+        if st.button("± Porsiyonu Güncelle", key="scale_recipe_btn", disabled=not is_scale_ready, use_container_width=True):
+            if is_scale_ready:
+                with st.spinner(f'Tarif {target_servings} kişilik porsiyona göre yeniden hesaplanıyor...'):
+                    try:
+                        system_prompt_scale = (
+                            "Sen hassas bir mutfak matematikçisi ve şefsin. Görevin, verilen bir tarifi, kullanıcının belirttiği yeni porsiyon sayısına göre tüm malzeme miktarlarını ve ilgili pişirme sürelerini/talimatlarını **orantılı ve mantıklı bir şekilde** yeniden hesaplayıp TAMAMEN Türkçe olarak sunmaktır. Sadece yeni, güncellenmiş tarifi, malzeme ve yapılış aşamalarını Markdown formatında döndür. Çıktının başlangıcında, yeni porsiyon sayısını net bir şekilde belirt."
+                        )
+                        
+                        user_query_scale = (
+                            f"Aşağıdaki tarifi al. Orijinal porsiyon sayısını tarife metninden çıkar ve tüm malzeme ve talimatları **{target_servings} kişilik** porsiyona göre yeniden ölçeklendirip bana yeni, tam tarifi ver. Lütfen ölçü birimlerini (özellikle kaşık/bardak gibi hacim birimlerini) doğru orantılayarak güncelle.\n\n"
+                            f"--- Orijinal Tarif ---\n{recipe_to_scale}"
+                        )
+                        
+                        parts_list_scale = [
+                            {"text": user_query_scale}
+                        ]
+
+                        result_text_scale = call_gemini_api(parts_list_scale, system_prompt_scale, api_key)
+                        st.session_state['last_scale_output'] = result_text_scale
+
+                        with scale_col2:
+                             st.subheader(f"✅ Güncellenmiş Tarif ({target_servings} Kişilik)")
+                             with st.container(border=True, height=500):
+                                 if result_text_scale:
+                                     st.markdown(result_text_scale)
+                                 else:
+                                     st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
+                        
+                    except Exception as e:
+                        st.error(f"Genel Hata: {e}")
+            else:
+                st.info("Lütfen tarifi yapıştırın ve yeni porsiyon sayısını girin.")
+
+    with scale_col2:
+        st.subheader("✅ Güncellenmiş Tarif Sonucu")
+        with st.container(border=True, height=500):
+            if 'last_scale_output' in st.session_state and st.session_state['last_scale_output']:
+                st.markdown(st.session_state['last_scale_output'])
+            else:
+                 st.markdown("""
+                    <p class="text-center text-gray-500 italic mt-8">
+                        Tarif metnini yapıştırıp hedef porsiyon sayısını ayarladıktan sonra, yeni porsiyona göre ayarlanmış güncel tarif burada görünecektir.
+                    </p>
+                    """, unsafe_allow_html=True)
 
 
-# --- 4. Malzeme İkamesi Alanı ---
+# --- 5. Malzeme İkamesi Alanı ---
 elif selected_page == "🔄 MALZEME İKAMESİ":
     st.header(PAGES[selected_page])
     st.markdown("Elinizde olmayan veya kullanmak istemediğiniz bir malzeme için en iyi ikameleri, kullanım amaçlarına göre oranlarıyla birlikte öğrenin.")
@@ -416,7 +493,7 @@ elif selected_page == "🔄 MALZEME İKAMESİ":
                     """, unsafe_allow_html=True)
 
 
-# --- 5. Ölçü Çevirici Alanı (ÇİFT YÖNLÜ ve TR BAZLI) ---
+# --- 6. Ölçü Çevirici Alanı (ÇİFT YÖNLÜ ve TR BAZLI) ---
 elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
     st.header(PAGES[selected_page])
     st.markdown("Hacim (Bardak, kaşık, ml, L) ve Ağırlık (Gram, kg) ölçülerini, seçtiğiniz malzemenin yoğunluğuna göre hassas bir şekilde çevirin. Çeviriler Türkiye mutfağı standartlarına uygundur.")
