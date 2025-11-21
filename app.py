@@ -61,7 +61,8 @@ def call_gemini_api(parts_list, system_instruction, api_key):
     # API Anahtarını doğrudan URL'ye ekliyoruz
     full_url = f"{GEMINI_API_URL}?key={api_key}"
 
-    st.info("API çağrısı yapılıyor, lütfen bekleyin...")
+    # Kullanıcıyı bilgilendir
+    st.info("🌐 API çağrısı yapılıyor, lütfen bekleyin...")
     
     try:
         # İsteği gönder
@@ -89,14 +90,15 @@ def call_gemini_api(parts_list, system_instruction, api_key):
             st.warning("Lütfen `secrets.toml` dosyasındaki API anahtarınızın doğru ve aktif olduğundan emin olun.")
         elif status_code == 400:
              st.error("❌ API Hatası 400 (Geçersiz İstek)")
-             # Hata detayı zaten resimdeki gibi gösterilecek, ek uyarıyı kaldırabiliriz.
-             pass 
+             st.warning("Girdi formatınız (resim/metin) ya da API çağrısının yapısı hatalı olabilir. Detaylar için aşağıdaki hata mesajını inceleyin.")
         else:
             st.error(f"❌ HTTP Hatası {status_code}: İstek başarısız oldu.")
         
         # Hata detaylarını göster
         error_details = response.text
-        st.error(f"Detaylar: {error_details[:200]}...") 
+        # Detay mesajını daha düzenli göstermek için st.expander kullan
+        with st.expander("Gelişmiş Hata Detayları"):
+            st.code(error_details, language='json')
         return None
     
     except Exception as e:
@@ -129,12 +131,22 @@ st.markdown("""
         background-color: #10b981; /* Zümrüt Yeşili 500 */
         color: white;
         border-bottom: 4px solid #047857; /* Koyu Zümrüt Yeşili */
+        font-weight: bold;
+    }
+    /* Sonuç konteynerleri için güzel bir stil */
+    .results-container {
+        padding: 16px;
+        border-radius: 8px;
+        background-color: #ffffff;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
     }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🍲 Akıllı Mutfak Asistanı")
-st.markdown("Yapay Zeka ile Yemek Tarifleri Keşfedin ve Dolabınızı Yönetin.")
+st.title("👨‍🍳 Akıllı Mutfak Asistanınız")
+st.markdown("""
+    Yapay zekanın gücüyle mutfağınızı dönüştürün! Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır ve elinizdeki malzemelerle yaratıcı yemekler önerir.
+""")
 
 # ==============================================================================
 # API ANAHTARINI SECRETS'TEN ALMA VE ESNEK KONTROL
@@ -157,17 +169,17 @@ if not api_key:
 
 
 # Sekmeler
-tab_recipe, tab_fridge = st.tabs(["🍽️ Tarif Keşfet", "🧊 Dolap Şefi"])
+tab_recipe, tab_fridge = st.tabs(["🍽️ Tarif DEDEKTÖRÜ", "🧊 DOLAP ŞEFİ"])
 
 # --- 1. Tarif Keşfetme Alanı ---
 with tab_recipe:
-    st.header("Yemek Fotoğrafından Tarif Analizi")
-    st.markdown("Yaptığınız veya gördüğünüz yemeğin fotoğrafını yükleyin. AI tarifi, besin değerlerini ve alışveriş listesini çıkarsın.")
+    st.header("Yemek Fotoğrafından Tarifi Çözümle")
+    st.markdown("Bir tabak yemeğin veya hazırladığınız yemeğin fotoğrafını yükleyin, Yapay Zeka anında tarifi, besin değerlerini ve alışveriş listenizi çıkarsın!")
     
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        uploaded_file = st.file_uploader("📸 Yemeğin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="recipe_upload")
+        uploaded_file = st.file_uploader("📸 Yemeğin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="recipe_upload", help="Yemeğinizin net ve aydınlık bir fotoğrafını çekin.")
         
         # BUTON KONTROLÜ İÇİN MANTIK: API key VE resim yüklendiğinde etkin olur.
         is_recipe_ready = bool(api_key and uploaded_file) 
@@ -178,10 +190,10 @@ with tab_recipe:
         # Eğer hazır değilse, neden hazır olmadığını belirten bir mesaj göster
         if not is_recipe_ready and api_key: # Sadece resim eksikse uyar (API key var)
             if uploaded_file is None:
-                st.warning("Butonu etkinleştirmek için lütfen bir resim yükleyin.")
+                st.info("Butonu etkinleştirmek için lütfen bir resim yükleyin.")
 
 
-        if st.button("Tarif ve Besin Değerlerini Çıkar", key="generate_recipe_btn", disabled=not is_recipe_ready):
+        if st.button("🍽️ Tarif ve Besin Değerlerini Çıkar", key="generate_recipe_btn", disabled=not is_recipe_ready, use_container_width=True):
             # API Anahtarı ve Resim Kontrolü başarılıysa devam et
             if is_recipe_ready:
                 try:
@@ -202,7 +214,7 @@ with tab_recipe:
                     result_text = call_gemini_api(parts_list, system_prompt, api_key)
 
                     with col2:
-                        st.subheader("Çözümlenen Tarif ve Analiz")
+                        st.subheader("✅ Çözümlenen Tarif ve Analiz")
                         if result_text:
                             st.markdown(result_text)
                         else:
@@ -213,19 +225,28 @@ with tab_recipe:
 
 
     with col2:
-        st.subheader("Sonuç Alanı")
-        st.info("Sonuçlar burada görüntülenecektir.")
+        st.subheader("🍽️ Tarif Sonucu")
+        st.markdown(
+            """
+            <div class="results-container border-2 border-emerald-100 min-h-[400px]">
+                <p class="text-center text-gray-500 italic mt-8">
+                    Yüklediğiniz resim analiz edildikten sonra burada bir başlık, malzeme listesi ve besin değerleri görünecektir.
+                    <br><br>
+                    *Afiyet olsun!*
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
 
 
 # --- 2. Dolap Şefi Alanı ---
 with tab_fridge:
     st.header("Malzeme Fotoğrafından Yemek Önerileri")
-    st.markdown("Buzdolabınızdaki malzemelerin fotoğrafını yükleyin. AI size o malzemelerle yapabileceğiniz yemekleri ve eksikleri söylesin.")
+    st.markdown("Buzdolabınızdaki veya elinizdeki malzemelerin fotoğrafını yükleyin. AI size o malzemelerle yapabileceğiniz **3 yaratıcı yemek fikri** ve eksik malzemeleri söylesin!")
     
     col3, col4 = st.columns([1, 1])
     
     with col3:
-        uploaded_file_fridge = st.file_uploader("🛒 Malzemelerin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="fridge_upload")
+        uploaded_file_fridge = st.file_uploader("🛒 Malzemelerin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="fridge_upload", help="Elinizdeki malzemeleri bir araya getirip net bir fotoğraf çekin.")
         
         # BUTON KONTROLÜ İÇİN MANTIK: API key VE resim yüklendiğinde etkin olur.
         is_fridge_ready = bool(api_key and uploaded_file_fridge)
@@ -236,10 +257,10 @@ with tab_fridge:
         # Eğer hazır değilse, neden hazır olmadığını belirten bir mesaj göster
         if not is_fridge_ready and api_key: # Sadece resim eksikse uyar (API key var)
             if uploaded_file_fridge is None:
-                st.warning("Butonu etkinleştirmek için lütfen bir resim yükleyiniz.")
+                st.info("Butonu etkinleştirmek için lütfen bir resim yükleyiniz.")
 
 
-        if st.button("Yemek Önerileri Oluştur", key="generate_suggestions_btn", disabled=not is_fridge_ready):
+        if st.button("✨ Yemek Önerileri Oluştur", key="generate_suggestions_btn", disabled=not is_fridge_ready, use_container_width=True):
             # API Anahtarı ve Resim Kontrolü başarılıysa devam et
             if is_fridge_ready:
                 try:
@@ -260,7 +281,7 @@ with tab_fridge:
                     result_text_fridge = call_gemini_api(parts_list_fridge, system_prompt_fridge, api_key)
 
                     with col4:
-                        st.subheader("Önerilen Yemekler ve Eksikler")
+                        st.subheader("✅ Önerilen Yemekler ve Eksikler")
                         if result_text_fridge:
                             st.markdown(result_text_fridge)
                         else:
@@ -271,5 +292,14 @@ with tab_fridge:
 
 
     with col4:
-        st.subheader("Sonuç Alanı")
-        st.info("Sonuçlar burada görüntülenecektir.")
+        st.subheader("🧊 Öneri Sonucu")
+        st.markdown(
+            """
+            <div class="results-container border-2 border-cyan-100 min-h-[400px]">
+                <p class="text-center text-gray-500 italic mt-8">
+                    Malzeme fotoğrafınız yüklendikten ve analiz edildikten sonra burada 3 adet yaratıcı yemek fikri ve eksik listesi görünecektir.
+                    <br><br>
+                    *Hemen Mutfağa!*
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
