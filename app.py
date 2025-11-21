@@ -3,1231 +3,472 @@ import requests
 import base64
 import json
 import re
+import sqlite3
+import datetime
 
 # --- API Sabitleri ve Yapılandırma ---
-# Gemini API URL'si
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent"
+
+# --- Veritabanı İşlemleri (SQLite) ---
+def init_db():
+    """Veritabanını ve tabloyu oluşturur (yoksa)."""
+    conn = sqlite3.connect('tarifler.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS recipes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_recipe_to_db(title, content, source):
+    """Tarifi veritabanına kaydeder."""
+    conn = sqlite3.connect('tarifler.db')
+    c = conn.cursor()
+    c.execute('INSERT INTO recipes (title, content, source) VALUES (?, ?, ?)', (title, content, source))
+    conn.commit()
+    conn.close()
+
+def get_all_recipes():
+    """Tüm tarifleri tarihe göre sıralı getirir."""
+    conn = sqlite3.connect('tarifler.db')
+    conn.row_factory = sqlite3.Row # Sütun isimleriyle erişim için
+    c = conn.cursor()
+    c.execute('SELECT * FROM recipes ORDER BY created_at DESC')
+    recipes = [dict(row) for row in c.fetchall()]
+    conn.close()
+    return recipes
+
+def delete_recipe_from_db(recipe_id):
+    """Tarifi siler."""
+    conn = sqlite3.connect('tarifler.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM recipes WHERE id = ?', (recipe_id,))
+    conn.commit()
+    conn.close()
+
+# Uygulama başlarken veritabanını başlat
+init_db()
 
 # --- Yardımcı Fonksiyonlar ---
 
 def file_to_generative_part(uploaded_file):
-    """Yüklenen dosyayı Base64 verisine çevirir ve Gemini API formatına hazırlar."""
-    if uploaded_file is None:
-        return None, None
-
-    # Dosyayı bellekte oku
+    if uploaded_file is None: return None, None
     file_bytes = uploaded_file.read()
-    
-    # Base64 formatına çevir
     base64_data = base64.b64encode(file_bytes).decode('utf-8')
-    mime_type = uploaded_file.type
-
-    # Gemini API'nin beklediği format
-    return {
-        "inlineData": {
-            "data": base64_data,
-            "mimeType": mime_type
-        }
-    }, mime_type
+    return {"inlineData": {"data": base64_data, "mimeType": uploaded_file.type}}, uploaded_file.type
 
 def call_gemini_api(parts_list, system_instruction, api_key, use_search_grounding=False):
-    """
-    Gemini API'ye istek gönderir ve yanıtı işler.
-    
-    :param use_search_grounding: Eğer True ise, Google Search aracı kullanılır.
-    """
-    if not api_key:
-        raise ValueError("API Anahtarı bulunamadı.")
-
-    # Multimodal istekler için doğru JSON yapısı
+    if not api_key: raise ValueError("API Anahtarı bulunamadı.")
     payload = {
-        "contents": [
-            {
-                "parts": parts_list
-            }
-        ],
-        "systemInstruction": {
-            "parts": [{"text": system_instruction}]
-        },
+        "contents": [{"parts": parts_list}],
+        "systemInstruction": {"parts": [{"text": system_instruction}]},
     }
+    if use_search_grounding: payload["tools"] = [{"google_search": {}}]
     
-    # Yeni özellik: Google Search Grounding ekleme
-    if use_search_grounding:
-        # Arama aracını payload'a ekle
-        payload["tools"] = [{"google_search": {}}]
-
-
-    headers = {
-        'Content-Type': 'application/json'
-    }
-
-    # API Anahtarını doğrudan URL'ye ekliyoruz
-    full_url = f"{GEMINI_API_URL}?key={api_key}"
-    
-    # API'ye istek gönderme ve hata yönetimi
     try:
-        response = requests.post(full_url, headers=headers, data=json.dumps(payload))
-        response.raise_for_status() # 4xx veya 5xx hatalarını HTTPError olarak fırlatır
-
-        # Yanıtı JSON olarak ayrıştırma
+        response = requests.post(
+            f"{GEMINI_API_URL}?key={api_key}", 
+            headers={'Content-Type': 'application/json'}, 
+            data=json.dumps(payload)
+        )
+        response.raise_for_status()
         result = response.json()
-        
-        # Metin içeriğini çıkar
         candidate = result.get('candidates', [None])[0]
         text = candidate.get('content', {}).get('parts', [{}])[0].get('text') if candidate else None
-
-        if not text:
-            # Geçerli metin yanıtı yoksa hata mesajını kontrol et
-            error_message = result.get('error', {}).get('message', 'Bilinmeyen bir API yanıt hatası.')
-            if response.status_code != 200:
-                raise Exception(f"API Yanıt Kodu {response.status_code}. Detaylar: {response.text}")
-            
-            # Eğer yanıt boşsa ve durum kodu 200 ise, modelin boş döndürdüğünü varsayalım
-            if not text and response.status_code == 200:
-                return ""
-            
-            raise Exception(f"API'den geçerli metin yanıtı alınamadı. Hata: {error_message}")
         
+        if not text and response.status_code == 200: return ""
+        if not text: raise Exception("API'den geçerli metin yanıtı alınamadı.")
         return text
-
-    except requests.exceptions.HTTPError as e:
-        status_code = response.status_code
-        
-        if status_code == 401:
-            st.error("❌ API Hatası 401 (Yetkilendirme Başarısız)")
-            st.warning("Lütfen API anahtarınızın doğru ve aktif olduğundan emin olun.")
-        elif status_code == 400:
-             st.error("❌ API Hatası 400 (Geçersiz İstek)")
-             st.warning("Girdi formatınız (resim/metin) ya da API çağrısının yapısı hatalı olabilir. Detaylar için aşağıdaki hata mesajını inceleyin.")
-        else:
-            st.error(f"❌ HTTP Hatası {status_code}: İstek başarısız oldu.")
-        
-        # Hata detaylarını göster
-        error_details = response.text
-        with st.expander("Gelişmiş Hata Detayları"):
-            st.code(error_details, language='json')
-        return None
-    
     except Exception as e:
-        st.error(f"❌ Beklenmedik bir hata oluştu: {e}")
+        st.error(f"Hata oluştu: {e}")
         return None
-    
-def generate_full_recipe(idea_name, ingredient_list, api_key):
-    """Dolap Şefi'nden gelen bir fikre dayanarak tam bir tarif oluşturur."""
-    st.subheader(f"'{idea_name}' İçin Tam Tarif Oluşturuluyor...")
-    
-    system_prompt_full = "Sen uzman bir şefsin. Görevin, verilen yemek fikri ve malzeme listesine dayanarak, mantıklı bir porsiyon sayısıyla (örneğin 4 kişilik) TAM ve detaylı bir tarif (malzemeler ve yapılış aşamaları) hazırlamaktır. Tüm çıktı TAMAMEN Türkçe ve iyi formatlanmış Markdown başlıkları ve listeleri kullanmalıdır."
-    
-    user_query_full = f"Aşağıdaki yemek fikri için, belirtilen mevcut malzemeleri de kullanarak, eksik malzemeleri tamamlayarak 4 kişilik tam bir tarif oluştur. Fikir adı: '{idea_name}'. Mevcut malzemeler: {ingredient_list}. Yeni tarif porsiyon sayısıyla başlamalı ve tam malzeme listesini, ardından detaylı yapılış aşamalarını içermelidir."
-    
-    parts_list_full = [
-        {"text": user_query_full}
-    ]
-    # Web aramasına gerek olmadığı için use_search_grounding=False (varsayılan)
-    result_text_full = call_gemini_api(parts_list_full, system_prompt_full, api_key)
-    return result_text_full
-
-def parse_fridge_suggestions(markdown_text):
-    """
-    Dolap Şefi'nin Markdown çıktısını 3 ayrı fikre böler.
-    Her fikri {'title': ..., 'content': ...} olarak döndürür.
-    Markdown çıktısının Yemek Fikri 1, Yemek Fikri 2, Yemek Fikri 3 başlıklarını kullandığını varsayar.
-    """
-    if not markdown_text:
-        return []
-    
-    # Genişletilmiş regex: Başlık ve bir sonraki başlık veya metin sonu arasındaki her şeyi yakalar
-    # Başlıklar genelde ## veya ### ile başlar
-    suggestions = re.split(r'^(#+\s*Yemek Fikri\s*\d+):', markdown_text, flags=re.MULTILINE)
-    
-    # İlk eleman (bazen boş veya giriş metni) atılır
-    suggestions.pop(0)
-
-    parsed_list = []
-    
-    for i in range(0, len(suggestions), 2):
-        # Başlık formatı: "# Yemek Fikri 1"
-        raw_title = suggestions[i].strip()
-        
-        # İçerik: Bir sonraki eleman
-        content = suggestions[i+1].strip()
-        
-        # Sadece yemek fikrinin adını çıkarmaya çalışalım (örn: "Kremalı Mantarlı Makarna" gibi)
-        # Basitlik için, başlığı kullanıyoruz.
-        parsed_list.append({
-            'title': raw_title.replace('#', '').strip(), # Başlık işaretlerini kaldır
-            'content': content
-        })
-
-    # Eğer ayrıştırma başarısız olursa, tüm metni tek bir sonuç olarak döndür
-    if not parsed_list and markdown_text:
-        return [{'title': "Dolap Şefi Analizi", 'content': markdown_text}]
-
-    return parsed_list
-
 
 # --- Streamlit Uygulama Arayüzü ---
 
-st.set_page_config(page_title="Akıllı Mutfak Asistanı", layout="wide")
+st.set_page_config(page_title="Akıllı Mutfak Asistanı", layout="wide", page_icon="👨‍🍳")
 
-# Özel CSS ile arayüzü güzelleştirme (Sidebar kaldırıldığı için CSS güncellendi)
 st.markdown("""
     <style>
-    .stApp {
-        background-color: #f7f9fb;
+    .stApp { background-color: #f8fafc; }
+    h1, h2, h3 { color: #0f766e; }
+    
+    /* Navigasyon Butonları */
+    .nav-btn {
+        margin: 5px; width: 100%;
     }
-    /* Ana içerik alanındaki başlıkları ve konteynerleri stilize etme */
-    h1, h2, h3 {
-        color: #10b981; /* Zümrüt Yeşili */
+    div[data-testid="stHorizontalBlock"] {
+        align-items: center;
     }
-    /* Streamlit butonlarının varsayılan stilini değiştirerek menü butonu gibi görünmesini sağlıyoruz */
-    .stButton>button[type="button"] {
-        white-space: normal;
-        text-align: center;
-        height: auto;
-        padding: 10px 5px; /* Yatay düğmeler için daha kompakt */
-        margin: 2px;
-        border-radius: 6px;
-        transition: background-color 0.2s, box-shadow 0.2s;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        border: 1px solid rgba(0,0,0,0.1); 
+    
+    /* Sonuç Kutuları */
+    .result-box {
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        border: 1px solid #e2e8f0;
+        margin-top: 10px;
     }
-    /* Seçili menü butonu (primary tipinde) */
-    .stButton>button[type="button"][kind="primary"] {
-        background-color: #10b981;
-        color: white;
-        font-weight: bold;
-        border-color: #059669;
-        box-shadow: 0 2px 4px rgba(16, 185, 129, 0.4);
-    }
-    /* Diğer menü butonları (secondary tipinde) */
-    .stButton>button[type="button"][kind="secondary"] {
-        background-color: #ffffff;
-        color: #333333;
-    }
-    /* Hover efekti */
-    .stButton>button[type="button"]:hover:not([kind="primary"]) {
-        background-color: #d1fae5; /* Çok açık yeşil */
-    }
-    /* Navigasyon barını küçültmek için */
-    .stHorizontalBlock {
-        gap: 0.5rem; /* Butonlar arası boşluk */
+    
+    /* Toast Mesajları */
+    .stToast {
+        background-color: #10b981 !important;
+        color: white !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("👨‍🍳 Akıllı Mutfak Asistanınız")
+st.title("👨‍🍳 Akıllı Mutfak Asistanı")
 
-
-# ==============================================================================
-# API Anahtarı Yönetimi - Sadece secrets.toml'dan oku
-# ==============================================================================
-
-# API anahtarını sadece secrets'tan al
-api_key = st.secrets.get("GEMINI_API_KEY")
+# API Anahtarı Kontrolü
+api_key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("api_keys", {}).get("gemini")
 if not api_key:
-    api_key = st.secrets.get("api_keys", {}).get("gemini")
+    st.error("🔑 API Anahtarı Eksik! Lütfen `secrets.toml` dosyanızı kontrol edin.")
+    st.stop()
 
-# Anahtarın durumunu kontrol et
-if not api_key:
-    st.error("🔑 API Anahtarı Eksik")
-    st.warning("Lütfen Gemini API anahtarınızı `.streamlit/secrets.toml` dosyanıza `GEMINI_API_KEY` adıyla ekleyin.")
-# ==============================================================================
-
-# --- Sayfa ve Oturum Durumu Yönetimi ---
-# Yeni sayfa listesi (ANA SAYFA eklendi)
+# --- Navigasyon Yönetimi ---
 PAGES = {
-    "🏠 ANA SAYFA": "Başlangıç ve Genel Bakış",
-    "🍽️ Tarif DEDEKTÖRÜ": "Yemek Fotoğrafından Tarifi Çözümle",
-    "🔎 TARİF ARAMA": "Yemek Adına Göre Anlık Tarif Bul", 
-    "🧊 DOLAP ŞEFİ": "Malzeme Fotoğrafından Yemek Önerileri",
-    "♻️ TARİF UYARLAMA": "Tarif Uyarlama ve Değiştirme",
-    "± PORSİYON AYARLAYICI": "Tarif Porsiyonunu Otomatik Hesapla",
-    "📒 TARİFLERİM": "Kayıtlı Tarifleriniz", 
-    "🔄 MALZEME İKAMESİ": "Malzeme İkamesi Bulucu",
-    "⚖️ ÖLÇÜ ÇEVİRİCİ": "Malzemeye Özel Ölçü Çevirici",
-    "🌡️ SAKLAMA REHBERİ": "Gıda Güvenliği ve Saklama Sıcaklıkları",
-    "📝 ALIŞVERİŞ LİSTESİ": "Listeyi Birleştir ve Reyonlara Ayır",
+    "🏠 ANA SAYFA": "nav_home",
+    "🍽️ FOTOĞRAFTAN TARİF": "nav_detector",
+    "🔎 TARİF ARAMA": "nav_search", 
+    "🧊 DOLAP ŞEFİ": "nav_fridge",
+    "♻️ TARİF UYARLAMA": "nav_adapt",
+    "± PORSİYON": "nav_scale",
+    "📒 TARİF DEFTERİM": "nav_book", 
+    "🔄 İKAME": "nav_sub",
+    "⚖️ ÇEVİRİCİ": "nav_conv",
+    "🌡️ SAKLAMA": "nav_storage",
+    "📝 LİSTE": "nav_list",
 }
 
-# Oturum Durumu Başlatma/Kontrol
-if 'saved_recipes' not in st.session_state: st.session_state['saved_recipes'] = []
-if 'last_fridge_output' not in st.session_state: st.session_state['last_fridge_output'] = ""
-if 'generated_full_recipe' not in st.session_state: st.session_state['generated_full_recipe'] = None
-if 'selected_recipe_index' not in st.session_state: st.session_state['selected_recipe_index'] = None
-if 'last_search_recipe_output' not in st.session_state: st.session_state['last_search_recipe_output'] = ""
-if 'last_recipe_output' not in st.session_state: st.session_state['last_recipe_output'] = ""
-if 'recipe_transfer_content' not in st.session_state: st.session_state['recipe_transfer_content'] = None
-if 'current_page' not in st.session_state:
-    st.session_state['current_page'] = "🏠 ANA SAYFA" # Varsayılan olarak ANA SAYFA
+# Session State Başlatma
+if 'current_page' not in st.session_state: st.session_state['current_page'] = "🏠 ANA SAYFA"
+if 'transfer_content' not in st.session_state: st.session_state['transfer_content'] = ""
 
-# --- Horizontal Navigasyon Barı ---
-
-st.markdown("### 🚀 Hızlı Erişim Araçları")
-
-# Butonların listesi
-page_keys = list(PAGES.keys())
-
-# Navigasyonu bir Streamlit konteynerine alıyoruz
+# Navigasyon Barı
 with st.container():
-    # İlk sıra (6 araç)
-    cols1 = st.columns(6)
-    for i, key in enumerate(page_keys[:6]):
-        with cols1[i]:
-            # Eğer bu sayfa seçiliyse butonu "primary" yap, değilse "secondary"
-            button_type = "primary" if key == st.session_state['current_page'] else "secondary"
-            if st.button(key, key=f"nav_top_{key}", type=button_type, use_container_width=True, help=PAGES[key]):
-                st.session_state['current_page'] = key
+    st.markdown("### 🚀 Hızlı Menü")
+    cols = st.columns(len(PAGES))
+    for i, (page_name, key) in enumerate(PAGES.items()):
+        # Butonları 2 satıra bölmek için basit mantık (ekran genişliğine göre)
+        # Burada tek satırda sıkışabilir, bu yüzden 2 satırlık grid yapalım
+        if i == 0:  col_idx = 0; row1 = st.columns(6); row2 = st.columns(5)
+        
+        target_col = row1[i] if i < 6 else row2[i-6]
+        
+        with target_col:
+            btn_type = "primary" if page_name == st.session_state['current_page'] else "secondary"
+            if st.button(page_name, key=key, type=btn_type, use_container_width=True):
+                st.session_state['current_page'] = page_name
                 st.rerun()
 
-    # İkinci sıra (kalan 5 araç)
-    # Kalan 5 butonu 6 kolonluk bir alana yaymak için ilk kolonu boş bırakabiliriz
-    cols2 = st.columns(6) 
-    # İlk kolonu boş bırak (i=0)
-    for i, key in enumerate(page_keys[6:]):
-        with cols2[i + 1]: # cols2[0] boş, butonlar cols2[1] den başlar
-            button_type = "primary" if key == st.session_state['current_page'] else "secondary"
-            if st.button(key, key=f"nav_top_{key}", type=button_type, use_container_width=True, help=PAGES[key]):
-                st.session_state['current_page'] = key
-                st.rerun()
+st.markdown("---")
 
-st.markdown("---") # Ayırıcı
+page = st.session_state['current_page']
 
-# Seçili sayfayı al
-selected_page = st.session_state['current_page']
+# --- Ortak Kaydetme Bileşeni ---
+def render_save_section(content, default_title, source_name, key_suffix):
+    """Herhangi bir tarif çıktısının altına eklenebilecek standart kaydetme paneli."""
+    if not content: return
 
+    st.markdown("### 💾 Bu Tarifi Kaydet")
+    with st.container():
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            title = st.text_input("Tarif Adı", value=default_title, key=f"title_{key_suffix}", label_visibility="collapsed", placeholder="Tarif Adı Giriniz")
+        with col2:
+            if st.button("Kaydet", key=f"btn_{key_suffix}", use_container_width=True):
+                if title:
+                    save_recipe_to_db(title, content, source_name)
+                    st.toast(f"✅ '{title}' Tarif Defterine kaydedildi!", icon="📒")
+                else:
+                    st.toast("⚠️ Lütfen bir başlık girin.", icon="⚠️")
 
-# --- Ana İçerik Alanı (Koşullu Renderlama) ---
+# --- SAYFALAR ---
 
-# --- 0. Ana Sayfa Alanı (YENİ) ---
-if selected_page == "🏠 ANA SAYFA":
-    st.header("🏠 Akıllı Mutfak Asistanına Hoş Geldiniz")
-    st.markdown(f"**{PAGES['🏠 ANA SAYFA']}**")
-    
+# 0. ANA SAYFA
+if page == "🏠 ANA SAYFA":
+    st.info("👋 Hoş Geldiniz! Yukarıdaki menüden bir araç seçerek başlayın.")
     st.markdown("""
-        <div style="padding: 20px; border-left: 6px solid #10b981; background-color: #e0f2f1; border-radius: 8px; margin-bottom: 20px;">
-            **Yapay zekanın gücüyle mutfağınızı dönüştürün!** Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır, elinizdeki malzemelerle yaratıcı yemekler önerir, ölçü birimi çevirileri yapar, porsiyonları ayarlar ve tariflerinizi tek bir yerde yönetmenize olanak tanır.
-        </div>
-    """, unsafe_allow_html=True)
+    ### 🌟 Öne Çıkan Özellikler
+    * **Kalıcı Hafıza:** Artık kaydettiğiniz tarifler tarayıcıyı kapatsanız bile silinmez!
+    * **Akıllı Entegrasyon:** Dolap şefinden gelen tarifi kaydedip, tek tıkla porsiyonunu ayarlayabilirsiniz.
+    """)
     
-    st.image("https://placehold.co/800x250/10b981/ffffff?text=Akıllı+Mutfak+Asistanı+Görseli", caption="Hemen mutfağa girmeye hazır mısınız?", use_column_width=True)
+    # Son eklenen tarifleri göster
+    recipes = get_all_recipes()
+    if recipes:
+        st.subheader("Son Eklenen Tarifler")
+        cols = st.columns(3)
+        for i, recipe in enumerate(recipes[:3]):
+            with cols[i]:
+                st.markdown(f"**{recipe['title']}**")
+                st.caption(f"Kaynak: {recipe['source']}")
+                if st.button("Görüntüle", key=f"home_view_{recipe['id']}"):
+                    st.session_state['current_page'] = "📒 TARİF DEFTERİM"
+                    st.rerun()
 
-    st.subheader("💡 Mutfak Araçları ve Kullanım Alanları")
-    
-    st.markdown("Üstteki düğmeleri kullanarak aşağıdaki araçlara anında geçiş yapabilirsiniz:")
-    
-    tool_list = [
-        ("🍽️ Tarif DEDEKTÖRÜ", "Bir tabak yemeğin fotoğrafını yükleyerek tarifi, malzemeleri ve besin değerlerini hızlıca çözümleyin."),
-        ("🧊 DOLAP ŞEFİ", "Buzdolabınızdaki veya elinizdeki malzemelerin fotoğrafını çekin, AI size 3 yaratıcı yemek önerisi ve eksik malzeme listesi sunsun."),
-        ("🔎 TARİF ARAMA", "Web'de arama yaparak istediğiniz yemeğin en popüler ve güncel tarifini bulun ve kaydedin."),
-        ("± PORSİYON AYARLAYICI", "Tarif metnini yapıştırın ve istediğiniz porsiyon sayısına göre tüm malzeme oranlarını anında güncelleyin."),
-        ("📒 TARİFLERİM", "Kaydettiğiniz tüm tariflere tek bir merkezden kolayca erişin, inceleyin ve yönetin."),
-    ]
-    
-    for icon, description in tool_list:
-        st.markdown(f"**{icon}:** {description}")
-
-    st.markdown("---")
-    st.info("Bu uygulama, Streamlit'in kısıtlamaları nedeniyle tarifleri yalnızca **mevcut tarayıcı oturumunuz süresince** saklar. Yeni bir oturum açtığınızda kayıtlı tarifleriniz kaybolacaktır.")
-
-
-# --- 1. Tarif Keşfetme Alanı (Fotoğraf) ---
-elif selected_page == "🍽️ Tarif DEDEKTÖRÜ":
-    st.header(PAGES[selected_page])
-    st.markdown("Bir tabak yemeğin veya hazırladığınız yemeğin fotoğrafını yükleyin, Yapay Zeka anında tarifi, besin değerlerini ve alışveriş listenizi çıkarsın!")
-    
-    col1, col2 = st.columns([1, 2]) # Giriş alanı 1/3, sonuç alanı 2/3
+# 1. FOTOĞRAFTAN TARİF
+elif page == "🍽️ FOTOĞRAFTAN TARİF":
+    st.header("📸 Fotoğraftan Tarif Çıkar")
+    col1, col2 = st.columns([1, 2])
     
     with col1:
-        uploaded_file = st.file_uploader("📸 Yemeğin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="recipe_upload", help="Yemeğinizin net ve aydınlık bir fotoğrafını çekin.")
+        img = st.file_uploader("Yemek Fotoğrafı Yükle", type=['jpg', 'png', 'jpeg'])
+        if img: st.image(img, use_column_width=True)
         
-        is_recipe_ready = bool(api_key and uploaded_file) 
-
-        if uploaded_file is not None:
-            st.image(uploaded_file, caption='Yemek Önizleme', use_column_width=True)
-            
-        if not is_recipe_ready and api_key and uploaded_file is None:
-            st.info("Butonu etkinleştirmek için lütfen bir resim yükleyin.")
-
-
-        if st.button("🍽️ Tarif ve Besin Değerlerini Çıkar", key="generate_recipe_btn", disabled=not is_recipe_ready, use_container_width=True):
-            if is_recipe_ready:
-                with st.spinner('Tarif ve besin değerleri analiz ediliyor...'):
-                    try:
-                        image_part, mime_type = file_to_generative_part(uploaded_file)
-                        
-                        system_prompt = "Sen profesyonel bir aşçı ve beslenme uzmanısısın. Görev, resimdeki yemeği en ince ayrıntısına kadar analiz etmek ve TAMAMEN Türkçe olarak, aşağıda belirtilen formatta detaylı bilgi sağlamaktır. Yanıtını iyi formatlanmış Markdown başlıkları, kalın metinler ve listeler kullanarak hazırla."
-                        
-                        user_query = f"Bu pişmiş bir yemeğin fotoğrafı. Lütfen tam tarifi, gerekli malzemelerin alışveriş listesini (temel mutfak malzemeleri hariç, örneğin su, tuz, karabiber, sirke, temel yağlar gibi) ve tahmini besin değerlerini (Kalori, Yağ, Protein, Şeker, Tuz) **Markdown** formatında net başlıklarla ayırarak sağla. Besin değerleri bölümünde her bir öğeyi ayrı satırda ve sadece sayısal tahmini değerleri (örn: 500 kcal, 20g) belirterek listele. Lütfen başlangıçtaki porsiyon sayısını belirt."
-                        
-                        parts_list = [
-                            image_part,
-                            {"text": user_query}
-                        ]
-
-                        result_text = call_gemini_api(parts_list, system_prompt, api_key)
-
-                        st.session_state['last_recipe_output'] = result_text
-
-                        with col2:
-                            st.subheader("✅ Çözümlenen Tarif ve Analiz")
-                            if result_text:
-                                st.markdown(result_text)
-                                st.session_state['last_recipe_output'] = result_text
-                                
-                                st.markdown("---")
-                                st.subheader("Kaydet")
-                                # Kaydetme işlemi için, çıktının varlığını kontrol et
-                                is_save_ready = st.session_state.get('last_recipe_output') not in [None, ""]
-                                
-                                recipe_title = st.text_input(
-                                    "Tarif Başlığı (Kaydetmek için)", 
-                                    key="save_title_recipe_dedector", 
-                                    placeholder="Örn: Ev Yapımı Lazanya",
-                                    disabled=not is_save_ready
-                                )
-                                if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_dedector_btn", disabled=not (recipe_title and is_save_ready)):
-                                    if recipe_title:
-                                        st.session_state['saved_recipes'].append({
-                                            'title': recipe_title,
-                                            'content': st.session_state['last_recipe_output'], # Kayıt için session state'ten al
-                                            'source': 'Tarif Dedektörü'
-                                        })
-                                        # Kayıt yapıldıktan sonra seçili tarifi sıfırlayalım ki kullanıcı listeyi kontrol edebilsin
-                                        st.session_state['selected_recipe_index'] = len(st.session_state['saved_recipes']) - 1
-                                        st.success(f"'{recipe_title}' tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
-                                        # Input'u temizle
-                                        st.session_state["save_title_recipe_dedector"] = ""
-                            else:
-                                st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
-                                
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-
-
+        if st.button("Analiz Et", type="primary", disabled=not img, use_container_width=True):
+            with st.spinner("Yemek analiz ediliyor..."):
+                img_data = file_to_generative_part(img)
+                prompt = "Bu yemeğin adı ne? Detaylı tarifi, malzemeleri ve besin değerleri nedir? Markdown formatında ver."
+                res = call_gemini_api([img_data[0], {"text": "Bu yemeğin tarifini ver"}], prompt, api_key)
+                st.session_state['det_res'] = res
+    
     with col2:
-        st.subheader("🍽️ Tarif Sonucu")
-        with st.container(border=True, height=500):
-            if 'last_recipe_output' in st.session_state and st.session_state.get('last_recipe_output') != "":
-                st.markdown(st.session_state['last_recipe_output'])
-            else:
-                st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Yüklediğiniz resim analiz edildikten sonra burada bir başlık, malzeme listesi ve besin değerleri görünecektir.
-                        <br><br>
-                        *Afiyet olsun!*
-                    </p>
-                    """, unsafe_allow_html=True)
+        if 'det_res' in st.session_state and st.session_state['det_res']:
+            with st.container(border=True):
+                st.markdown(st.session_state['det_res'])
+            # Kaydetme Alanı
+            # Başlığı içerikten tahmin etmeye çalış (ilk satır genelde başlıktır)
+            default_title = st.session_state['det_res'].split('\n')[0].replace('#', '').strip()
+            render_save_section(st.session_state['det_res'], default_title, "Fotoğraf Analizi", "det")
 
-
-# --- 2. Anlık Tarif Arama Alanı ---
-elif selected_page == "🔎 TARİF ARAMA":
-    st.header(PAGES[selected_page])
-    st.markdown("Aradığınız yemeğin adını girin. Yapay zeka en güncel ve popüler tarifleri bulup size sunsun!")
-
-    col_s1, col_s2 = st.columns([1, 2])
+# 2. TARİF ARAMA
+elif page == "🔎 TARİF ARAMA":
+    st.header("🔎 Web'den Tarif Bul")
+    col1, col2 = st.columns([1, 2])
     
-    with col_s1:
-        recipe_name_search = st.text_input(
-            "Aranacak Yemek Adı", 
-            key="recipe_search_input",
-            placeholder="Örn: İrmik Helvası, Somon Izgara, Vegan Mercimek Köftesi"
-        )
-            
-        is_search_ready = bool(api_key and recipe_name_search)
-
-        if st.button("🔎 Tarifi Anında Bul", key="search_recipe_btn", disabled=not is_search_ready, use_container_width=True):
-            if is_search_ready:
-                # Önceki çıktıyı temizle
-                st.session_state['last_search_recipe_output'] = ""
-                
-                with st.spinner(f"'{recipe_name_search}' için en güncel tarif web'de aranıyor..."):
-                    try:
-                        # Bu sorgu için web aramasını etkinleştiriyoruz
-                        system_prompt_search = (
-                            "Sen dünya çapında bir aşçısın. Görevin, verilen yemek adı için web'de arama yaparak "
-                            "en iyi, en popüler ve en anlaşılır TAM bir tarifi bulmak ve TAMAMEN Türkçe olarak sunmaktır. "
-                            "Tarif, net bir başlık, porsiyon sayısı, malzeme listesi ve detaylı yapılış aşamalarını içermelidir. "
-                            "Yanıtını iyi formatlanmış Markdown başlıkları ve listeleri kullanarak hazırla."
-                        )
-                        
-                        user_query_search = f"Lütfen '{recipe_name_search}' yemeğinin tam ve detaylı tarifini (malzemeler ve yapılış aşamaları) bulup paylaşır mısın?"
-                        
-                        parts_list_search = [
-                            {"text": user_query_search}
-                        ]
-
-                        # API Çağrısı: use_search_grounding=True ile web'e erişimi etkinleştir
-                        result_text_search = call_gemini_api(parts_list_search, system_prompt_search, api_key, use_search_grounding=True)
-                        
-                        # Çıktıyı session state'e kaydet
-                        st.session_state['last_search_recipe_output'] = result_text_search
-
-                        with col_s2:
-                             st.subheader(f"✅ '{recipe_name_search}' Tarifi")
-                             with st.container(border=True, height=500):
-                                 if result_text_search:
-                                     st.markdown(result_text_search)
-                                     
-                                     st.markdown("---")
-                                     st.subheader("Kaydet")
-                                     
-                                     # Kayıt için çıktının varlığını kontrol et
-                                     is_save_ready_search = st.session_state.get('last_search_recipe_output') not in [None, ""]
-                                     
-                                     recipe_title_search = st.text_input(
-                                         "Tarif Başlığı (Kaydetmek için)", 
-                                         key="save_title_recipe_search", 
-                                         value=recipe_name_search, 
-                                         placeholder="Örn: İrmik Helvası",
-                                         disabled=not is_save_ready_search
-                                     )
-                                     
-                                     # KAYDETME BUTONU - Şimdi session state'ten okuyarak çalışacak
-                                     if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_search_btn", disabled=not (recipe_title_search and is_save_ready_search)):
-                                        if recipe_title_search:
-                                            # Kayıt işlemi için session state'teki sonucu kullan
-                                            st.session_state['saved_recipes'].append({
-                                                'title': recipe_title_search,
-                                                'content': st.session_state['last_search_recipe_output'],
-                                                'source': 'Tarif Arama (Web)'
-                                            })
-                                            st.session_state['selected_recipe_index'] = len(st.session_state['saved_recipes']) - 1
-                                            st.success(f"'{recipe_title_search}' tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
-                                            st.session_state["save_title_recipe_search"] = ""
-                                 else:
-                                     st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
-                        
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-            else:
-                st.info("Lütfen aramak istediğiniz yemeğin adını girin.")
-
-    with col_s2:
-        st.subheader("🍽️ Tarif Sonucu")
-        with st.container(border=True, height=500):
-            if 'last_search_recipe_output' in st.session_state and st.session_state['last_search_recipe_output']:
-                st.markdown(st.session_state['last_search_recipe_output'])
-            else:
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Yemek adını girdikten sonra, web'den bulunan en güncel ve detaylı tarif burada görünecektir.
-                    </p>
-                    """, unsafe_allow_html=True)
-
-
-# --- 3. Dolap Şefi Alanı ---
-elif selected_page == "🧊 DOLAP ŞEFİ":
-    st.header(PAGES[selected_page])
-    st.markdown("Buzdolabınızdaki veya elinizdeki malzemelerin fotoğrafını yükleyin. AI size o malzemelerle yapabileceğiniz **3 yaratıcı yemek fikri** ve eksik malzemeleri söylesin!")
+    with col1:
+        query = st.text_input("Yemek Adı", placeholder="Örn: İzmir Köfte")
+        if st.button("Ara ve Bul", type="primary", disabled=not query, use_container_width=True):
+            with st.spinner("Web taranıyor..."):
+                prompt = f"'{query}' için en iyi, en popüler tam tarifi (malzemeler, yapılış) Türkçe olarak bul ve Markdown formatında sun."
+                res = call_gemini_api([{"text": query}], prompt, api_key, use_search_grounding=True)
+                st.session_state['search_res'] = res
+                st.session_state['last_search_query'] = query
     
-    col3, col4 = st.columns([1, 2])
+    with col2:
+        if 'search_res' in st.session_state and st.session_state['search_res']:
+            with st.container(border=True):
+                st.markdown(st.session_state['search_res'])
+            # Kaydetme Alanı
+            default_title = st.session_state.get('last_search_query', 'Yeni Tarif').title()
+            render_save_section(st.session_state['search_res'], default_title, "Web Arama", "search")
+
+# 3. DOLAP ŞEFİ
+elif page == "🧊 DOLAP ŞEFİ":
+    st.header("🧊 Dolap Şefi")
+    col1, col2 = st.columns([1, 2])
     
-    with col3:
-        uploaded_file_fridge = st.file_uploader("🛒 Malzemelerin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="fridge_upload", help="Elinizdeki malzemeleri bir araya getirip net bir fotoğraf çekin.")
+    with col1:
+        img = st.file_uploader("Malzeme Fotoğrafı", type=['jpg', 'png', 'jpeg'])
+        if img: st.image(img, use_column_width=True)
         
-        is_fridge_ready = bool(api_key and uploaded_file_fridge)
-        
-        if uploaded_file_fridge is not None:
-            st.image(uploaded_file_fridge, caption='Malzeme Önizleme', use_column_width=True)
-
-        if not is_fridge_ready and api_key and uploaded_file_fridge is None:
-            st.info("Butonu etkinleştirmek için lütfen bir resim yükleyiniz.")
-
-
-        if st.button("✨ Yemek Önerileri Oluştur", key="generate_suggestions_btn", disabled=not is_fridge_ready, use_container_width=True):
-            if is_fridge_ready:
-                st.session_state['generated_full_recipe'] = None # Yeni öneri geldiğinde tam tarifi sıfırla
-                with st.spinner('Malzemeler analiz ediliyor ve öneriler oluşturuluyor...'):
-                    try:
-                        image_part_fridge, mime_type_fridge = file_to_generative_part(uploaded_file_fridge)
-                        
-                        system_prompt_fridge = "Sen yaratıcı bir mutfak şefisin. Görevin, resimdeki malzemeleri en verimli şekilde kullanarak hazırlanabilecek 3 farklı yemek tarifi fikri sunmak. Her fikri ayrı ayrı, net başlıklarla ve TAMAMEN Türkçe olarak sun. Yanıtını iyi formatlanmış Markdown başlıkları, kalın metinler ve listeler kullanarak hazırla."
-                        
-                        user_query_fridge = f"Bu, buzdolabımdaki veya tezgahımdaki malzemelerin fotoğrafı. Lütfen bu malzemeleri kullanarak yapabileceğim 3 farklı yemek fikri sun. Her yemek için, **Yemek Fikri 1/2/3** şeklinde başlık kullan. Bu başlığın altında yemeğin adını, hangi malzemelerin mevcut olduğunu ve tamamlamak için hangi eksik malzemelerin gerektiğini **Markdown** formatında listele. Sadece sonucu ver."
-                        
-                        parts_list_fridge = [
-                            image_part_fridge,
-                            {"text": user_query_fridge}
-                        ]
-
-                        result_text_fridge = call_gemini_api(parts_list_fridge, system_prompt_fridge, api_key)
-                        st.session_state['last_fridge_output'] = result_text_fridge
-
-                        with col4:
-                            st.subheader("✅ Önerilen Yemekler ve Eksikler")
-                            if result_text_fridge:
-                                st.markdown("Aşağıdaki önerilerden birini seçerek tam tarifi oluşturabilirsiniz:")
-                            else:
-                                st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
-                                
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-
-
-    with col4:
-        st.subheader("🧊 Öneri Sonucu")
-        with st.container(border=True, height=500):
-            
-            if st.session_state.get('generated_full_recipe'):
-                # Tam tarif oluşturulduysa, onu göster ve kaydetme butonu ekle
-                full_recipe = st.session_state['generated_full_recipe']
-                st.subheader(f"✅ Tam Tarif: {full_recipe['title']}")
-                st.markdown(full_recipe['content'])
+        if st.button("Fikir Üret", type="primary", disabled=not img, use_container_width=True):
+            with st.spinner("Malzemeler inceleniyor..."):
+                img_data = file_to_generative_part(img)
+                prompt = "Bu malzemelerle yapılabilecek 3 farklı yemek fikri öner. Her fikri '### Fikir 1: Yemek Adı' formatında başlat. Sadece fikirleri ve eksik malzemeleri listele."
+                res = call_gemini_api([img_data[0], {"text": "Yemek fikirleri ver"}], prompt, api_key)
+                st.session_state['fridge_res'] = res
+                st.session_state['generated_recipe'] = None # Eski tarifi temizle
+    
+    with col2:
+        if 'fridge_res' in st.session_state and st.session_state['fridge_res']:
+            # Eğer tam tarif üretildiyse onu göster
+            if st.session_state.get('generated_recipe'):
+                st.info("Seçilen Fikir İçin Tam Tarif Oluşturuldu 👇")
+                with st.container(border=True):
+                    st.markdown(st.session_state['generated_recipe']['content'])
                 
-                st.markdown("---")
-                st.subheader("Tarifi Kaydet")
-                
-                is_save_ready_fridge = full_recipe.get('content') not in [None, ""]
-                
-                recipe_title_full = st.text_input(
-                    "Tarif Başlığı (Kaydetmek için)", 
-                    key="save_title_recipe_full_fridge", 
-                    value=full_recipe['title'], 
-                    placeholder="Örn: Kolay Mercimek Çorbası",
-                    disabled=not is_save_ready_fridge
+                # Tam Tarifi Kaydetme
+                render_save_section(
+                    st.session_state['generated_recipe']['content'], 
+                    st.session_state['generated_recipe']['title'], 
+                    "Dolap Şefi", 
+                    "fridge_full"
                 )
                 
-                if st.button("💾 Bu Tam Tarifi Kaydet", key="save_recipe_full_fridge_btn", disabled=not (recipe_title_full and is_save_ready_fridge)):
-                    if recipe_title_full:
-                        st.session_state['saved_recipes'].append({
-                            'title': recipe_title_full,
-                            'content': full_recipe['content'],
-                            'source': 'Dolap Şefi (Tam Tarif)'
-                        })
-                        # Kayıt yapıldıktan sonra seçili tarifi sıfırlayalım ki kullanıcı listeyi kontrol edebilsin
-                        st.session_state['selected_recipe_index'] = len(st.session_state['saved_recipes']) - 1
-
-                        st.success(f"'{recipe_title_full}' tam tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
-                        # Kaydettikten sonra tam tarif gösterimini sıfırla
-                        st.session_state['generated_full_recipe'] = None
-                        st.rerun() # Sayfayı yenile ve sadece önerileri göster
+                if st.button("⬅️ Fikir Listesine Dön"):
+                    st.session_state['generated_recipe'] = None
+                    st.rerun()
             
-            elif st.session_state.get('last_fridge_output'):
-                # Sadece öneri çıktıysa, önerileri parçala ve butonları göster
-                suggestions = parse_fridge_suggestions(st.session_state['last_fridge_output'])
+            else:
+                # Fikir Listesini Göster
+                st.subheader("Önerilen Fikirler")
+                st.markdown(st.session_state['fridge_res'])
                 
-                if suggestions:
-                    for i, suggestion in enumerate(suggestions):
-                        with st.expander(f"**{suggestion['title']}** Fikri İçeriği"):
-                            st.markdown(suggestion['content'])
-                            
-                            # Tam tarif oluşturma butonu
-                            if st.button(f"➡️ Tam Tarifi Oluştur", key=f"create_full_recipe_{i}", use_container_width=True):
-                                # Kullanıcının sadece tam tarifi oluşturmasını beklediğimiz için burası
-                                with st.spinner(f"'{suggestion['title']}' için tam tarif oluşturuluyor..."):
-                                    # Malzeme listesi için basit bir yer tutucu metin kullanıyoruz
-                                    ingredient_summary = f"({suggestion['content'].split('Mevcut Malzemeler:')[-1].split('Eksik Malzemeler:')[-1].strip().split('\n')[0].strip()})"
-                                    
-                                    full_recipe_content = generate_full_recipe(suggestion['title'], ingredient_summary, api_key)
-                                    
-                                    if full_recipe_content:
-                                        # Tam tarifi session state'e kaydet ve göster
-                                        st.session_state['generated_full_recipe'] = {
-                                            'title': suggestion['title'],
-                                            'content': full_recipe_content
-                                        }
-                                        st.rerun() # Tam tarifi göstermek için sayfayı yenile
-                                    else:
-                                        st.error("Tam tarif oluşturulamadı.")
-                else:
-                    st.error("Önerilen metin ayrıştırılamadı. Lütfen API çıktısını kontrol edin.")
-            
-            else:
-                # İlk durum: Hiçbir şey yok
-                st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Malzeme fotoğrafınız yüklendikten ve analiz edildikten sonra burada 3 adet yaratıcı yemek fikri ve eksik listesi görünecektir. Bir fikri seçerek tam tarife dönüştürebilirsiniz!
-                        <br><br>
-                        *Hemen Mutfağa!*
-                    </p>
-                    """, unsafe_allow_html=True)
-
-
-# --- 4. Tarif Uyarlama Alanı ---
-elif selected_page == "♻️ TARİF UYARLAMA":
-    st.header(PAGES[selected_page])
-    st.markdown("Mevcut bir tarifi (yazılı metin olarak) yapay zekaya verin ve beslenme tercihlerinize veya elinizdeki malzemelere göre uyarlamasını isteyin.")
-    
-    default_recipe_text = st.session_state.get('last_recipe_output', '') if 'last_recipe_output' in st.session_state else ""
-
-    recipe_to_adapt = st.text_area(
-        "Uyarlanacak Tarifin Metni", 
-        height=200, 
-        key="adapt_recipe_input", 
-        help="Buraya, değiştirmek istediğiniz tarifin tamamını yapıştırın.",
-        value=default_recipe_text
-    )
-    
-    adaptation_request = st.text_input(
-        "Değişiklik İsteği (Örn: 'Bunu glutensiz yap' veya 'Sığır etini mantarla değiştir')", 
-        key="adaptation_request_input"
-    )
-
-    is_adapt_ready = bool(api_key and recipe_to_adapt and adaptation_request)
-    
-    adapt_col1, adapt_col2 = st.columns([1, 2])
-
-    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
-    if 'last_adapt_output' not in st.session_state:
-        st.session_state['last_adapt_output'] = ""
-
-    with adapt_col1:
-        if st.button("♻️ Tarifi Uyarlama", key="adapt_recipe_btn", disabled=not is_adapt_ready, use_container_width=True):
-            if is_adapt_ready:
-                with st.spinner('Tarif isteğinize göre uyarlanıyor...'):
-                    try:
-                        system_prompt_adapt = "Sen yaratıcı bir şef ve beslenme uzmanısısın. Görevin, verilen tarifi, kullanıcının isteği doğrultusunda mantıklı ve uygulanabilir bir şekilde değiştirmek ve yeni tarifi TAMAMEN Türkçe olarak sunmaktır. Sadece yeni, güncellenmiş tarifi, malzeme ve yapılış aşamalarını Markdown formatında döndür. Giriş/giriş kısmı olmadan doğrudan tarife başla."
+                # Fikirleri Ayrıştır ve Butonları Oluştur
+                # Basit bir regex ile başlıkları bulalım
+                ideas = re.findall(r'### (.*?)\n', st.session_state['fridge_res'])
+                if ideas:
+                    st.markdown("---")
+                    st.write("Beğendiğiniz fikrin tam tarifini oluşturmak için tıklayın:")
+                    for idea in ideas:
+                        clean_title = idea.replace('Fikir', '').replace(':', '').strip()
+                        # Başındaki numarayı temizle
+                        clean_title = re.sub(r'^\d+\s*', '', clean_title)
                         
-                        user_query_adapt = f"Aşağıdaki tarifi, şu isteğe göre uyarlar mısın: '{adaptation_request}'.\n\n--- Orijinal Tarif ---\n{recipe_to_adapt}"
-                        
-                        parts_list_adapt = [
-                            {"text": user_query_adapt}
-                        ]
+                        if st.button(f"👨‍🍳 {clean_title} Tarifini Oluştur"):
+                            with st.spinner(f"{clean_title} için tarif yazılıyor..."):
+                                prompt = f"'{clean_title}' yemeği için, az önceki malzemeleri baz alarak 4 kişilik tam ve detaylı bir tarif yaz."
+                                full_res = call_gemini_api([{"text": "Tarif oluştur"}], prompt, api_key)
+                                st.session_state['generated_recipe'] = {'title': clean_title, 'content': full_res}
+                                st.rerun()
 
-                        result_text_adapt = call_gemini_api(parts_list_adapt, system_prompt_adapt, api_key)
-                        st.session_state['last_adapt_output'] = result_text_adapt
-
-                        with adapt_col2:
-                             st.subheader("✅ Uyarlanmış Yeni Tarif")
-                             with st.container(border=True, height=500):
-                                 if result_text_adapt:
-                                     st.markdown(result_text_adapt)
-                                 else:
-                                     st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
-                        
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-            else:
-                st.info("Lütfen hem tarifi hem de değişiklik isteğinizi girin.")
-
-    with adapt_col2:
-        st.subheader("✅ Uyarlanmış Yeni Tarif")
-        with st.container(border=True, height=500):
-            if 'last_adapt_output' in st.session_state and st.session_state['last_adapt_output']:
-                st.markdown(st.session_state['last_adapt_output'])
-            else:
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Tarif metnini ve değişiklik isteğini girdikten sonra uyarlanmış yeni tarif burada görünecektir.
-                    </p>
-                    """, unsafe_allow_html=True)
-                 
-# --- 5. Porsiyon Ayarlayıcı Alanı ---
-elif selected_page == "± PORSİYON AYARLAYICI":
-    st.header(PAGES[selected_page])
-    st.markdown("Bir tarifi mevcut porsiyon sayısıyla birlikte yapıştırın. Yapay zeka, istediğiniz yeni porsiyon sayısına göre tüm malzemeleri ve pişirme talimatlarını otomatik olarak güncellesin.")
+# 4. TARİF UYARLAMA
+elif page == "♻️ TARİF UYARLAMA":
+    st.header("♻️ Tarif Uyarlama")
+    col1, col2 = st.columns([1, 2])
     
-    # *** YENİ: Başlangıç değeri belirleme mantığı ***
-    # 1. Transfere özel anahtarı kontrol et ve içeriği al/temizle (Sadece tek seferlik çekim için pop kullanılır)
-    transferred_content = st.session_state.pop('recipe_transfer_content', None) 
-    
-    # 2. Başlangıç değerini belirle: Transfere öncelik ver, sonra son çıktıya
-    if transferred_content:
-        initial_recipe_text = transferred_content
-    elif 'last_recipe_output' in st.session_state:
-        initial_recipe_text = st.session_state['last_recipe_output']
-    else:
-        initial_recipe_text = ""
+    with col1:
+        # Transfer edilen içerik varsa al
+        default_text = st.session_state.get('transfer_content', '')
+        if default_text: st.info("Bir tarif aktarıldı.")
         
-    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
-    if 'last_scale_output' not in st.session_state:
-        st.session_state['last_scale_output'] = ""
-
-    recipe_to_scale = st.text_area(
-        "Porsiyonu Ayarlanacak Tarif Metni", 
-        height=200, 
-        key="scale_recipe_input", 
-        help="Lütfen tarifin mevcut porsiyon sayısını (örneğin '4 kişilik') içerdiğinden emin olun.",
-        value=initial_recipe_text # Belirlenen değeri kullan
-    )
-    
-    target_servings = st.number_input(
-        "Yeni Porsiyon Sayısı", 
-        min_value=1, 
-        value=2, 
-        step=1,
-        key="target_servings_input",
-        help="Tarifi kaç kişilik yapmak istiyorsunuz?"
-    )
-
-    is_scale_ready = bool(api_key and recipe_to_scale and target_servings >= 1)
-    
-    scale_col1, scale_col2 = st.columns([1, 2])
-
-    with scale_col1:
-        if st.button("± Porsiyonu Güncelle", key="scale_recipe_btn", disabled=not is_scale_ready, use_container_width=True):
-            if is_scale_ready:
-                with st.spinner(f'Tarif {target_servings} kişilik porsiyona göre yeniden hesaplanıyor...'):
-                    try:
-                        system_prompt_scale = (
-                            "Sen hassas bir mutfak matematikçisi ve şefsin. Görevin, verilen bir tarifi, kullanıcının belirttiği yeni porsiyon sayısına göre tüm malzeme miktarlarını ve ilgili pişirme sürelerini/talimatlarını **orantılı ve mantıklı bir şekilde** yeniden hesaplayıp TAMAMEN Türkçe olarak sunmaktır. Sadece yeni, güncellenmiş tarifi, malzeme ve yapılış aşamalarını Markdown formatında döndür. Çıktının başlangıcında, yeni porsiyon sayısını net bir şekilde belirt."
-                        )
-                        
-                        user_query_scale = (
-                            f"Aşağıdaki tarifi al. Orijinal porsiyon sayısını tarife metninden çıkar ve tüm malzeme ve talimatları **{target_servings} kişilik** porsiyona göre yeniden ölçeklendirip bana yeni, tam tarifi ver. Lütfen ölçü birimlerini (özellikle kaşık/bardak gibi hacim birimlerini) doğru orantılayarak güncelle.\n\n"
-                            f"--- Orijinal Tarif ---\n{recipe_to_scale}"
-                        )
-                        
-                        parts_list_scale = [
-                            {"text": user_query_scale}
-                        ]
-
-                        result_text_scale = call_gemini_api(parts_list_scale, system_prompt_scale, api_key)
-                        st.session_state['last_scale_output'] = result_text_scale
-
-                        with scale_col2:
-                             st.subheader(f"✅ Güncellenmiş Tarif ({target_servings} Kişilik)")
-                             with st.container(border=True, height=500):
-                                 if result_text_scale:
-                                     st.markdown(result_text_scale)
-                                     st.session_state['last_scale_output'] = result_text_scale
-                                     
-                                     st.markdown("---")
-                                     st.subheader("Kaydet")
-                                     
-                                     is_save_ready_scale = st.session_state.get('last_scale_output') not in [None, ""]
-                                     
-                                     recipe_title_scale = st.text_input(
-                                         "Tarif Başlığı (Kaydetmek için)", 
-                                         key="save_title_recipe_scaler", 
-                                         placeholder="Örn: 8 Kişilik Tiramisu",
-                                         disabled=not is_save_ready_scale
-                                     )
-                                     
-                                     if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_scaler_btn", disabled=not (recipe_title_scale and is_save_ready_scale)):
-                                        if recipe_title_scale:
-                                            st.session_state['saved_recipes'].append({
-                                                'title': recipe_title_scale,
-                                                'content': st.session_state['last_scale_output'],
-                                                'source': f'Porsiyon Ayarlayıcı ({target_servings} Kişi)'
-                                            })
-                                            # Kayıt yapıldıktan sonra seçili tarifi sıfırlayalım ki kullanıcı listeyi kontrol edebilsin
-                                            st.session_state['selected_recipe_index'] = len(st.session_state['saved_recipes']) - 1
-
-                                            st.success(f"'{recipe_title_scale}' tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
-                                            # Input'u temizle
-                                            st.session_state["save_title_recipe_scaler"] = ""
-                                 else:
-                                     st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
-                        
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-            else:
-                st.info("Lütfen tarifi yapıştırın ve yeni porsiyon sayısını girin.")
-
-    with scale_col2:
-        st.subheader("✅ Güncellenmiş Tarif Sonucu")
-        with st.container(border=True, height=500):
-            if 'last_scale_output' in st.session_state and st.session_state['last_scale_output']:
-                st.markdown(st.session_state['last_scale_output'])
-            else:
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Tarif metnini yapıştırıp hedef porsiyon sayısını ayarladıktan sonra, yeni porsiyona göre ayarlanmış güncel tarif burada görünecektir.
-                    </p>
-                    """, unsafe_allow_html=True)
-
-# --- 6. Tariflerim Alanı (Liste Görünümü) ---
-elif selected_page == "📒 TARİFLERİM":
-    st.header(PAGES[selected_page])
-    st.markdown("Kaydettiğiniz tarifleri buradan görüntüleyebilir ve yönetebilirsiniz.")
-    st.warning("🚨 **ÖNEMLİ NOT:** Bu özellik, Streamlit'in kısıtlamaları nedeniyle tarifleri yalnızca **mevcut tarayıcı oturumunuz süresince** saklar. Tarayıcı sekmesini kapattığınızda veya uygulamayı yenilediğinizde tarifler kaybolacaktır.")
-    
-    if not st.session_state.get('saved_recipes'):
-        st.info("Henüz kaydedilmiş bir tarifiniz bulunmuyor. 'Tarif Dedektörü', 'Tarif Arama' veya 'Porsiyon Ayarlayıcı' sekmelerinde bir tarif oluşturup kaydedebilirsiniz.")
-    else:
-        # Sol Kolon: Tarif Listesi, Sağ Kolon: Tarif İçeriği
-        list_col, view_col = st.columns([1, 2])
+        recipe_text = st.text_area("Orijinal Tarif", value=default_text, height=200, placeholder="Tarifi buraya yapıştırın...")
+        request = st.text_input("İsteğiniz", placeholder="Örn: Glutensiz yap, mantar ekle...")
         
-        # Eğer tarifler varsa ve henüz bir seçim yapılmamışsa, ilk tarifi otomatik seç
-        if st.session_state.get('selected_recipe_index') is None:
-            st.session_state['selected_recipe_index'] = 0
+        if st.button("Uyarla", type="primary", disabled=not (recipe_text and request), use_container_width=True):
+            with st.spinner("Uyarlanıyor..."):
+                prompt = f"Aşağıdaki tarifi şu isteğe göre düzenle: '{request}'. \n\n{recipe_text}"
+                res = call_gemini_api([{"text": prompt}], "Sen uzman bir şefsin. Sadece yeni tarifi ver.", api_key)
+                st.session_state['adapt_res'] = res
+                # Transfer içeriğini temizle
+                if default_text: st.session_state['transfer_content'] = ""
 
-        with list_col:
-            st.subheader("📋 Kayıtlı Tarifler")
-            st.caption(f"Toplam {len(st.session_state['saved_recipes'])} Tarif")
-            st.markdown("---")
+    with col2:
+        if 'adapt_res' in st.session_state and st.session_state['adapt_res']:
+            with st.container(border=True):
+                st.markdown(st.session_state['adapt_res'])
+            render_save_section(st.session_state['adapt_res'], "Uyarlanmış Tarif", "Uyarlama Modülü", "adapt")
 
-            # Tarif listesi butonlar halinde gösterilir
-            for i, recipe in enumerate(st.session_state['saved_recipes']):
-                recipe_label = f"📖 {recipe['title']} ({recipe['source']})"
-                
-                # Eğer bu tarif seçili ise, rengini primary (yeşil) yap
-                # Özel CSS kullandığımız için butona `type` parametresini vererek stilini yönetiyoruz.
-                button_type = "primary" if i == st.session_state.get('selected_recipe_index') else "secondary"
-                
-                if st.button(recipe_label, key=f"select_recipe_{i}", type=button_type, use_container_width=True):
-                    # Tıklanan tarifi seçili hale getir
-                    st.session_state['selected_recipe_index'] = i
-                    st.rerun() # Sayfayı yenile ve içeriği hemen göster
+# 5. PORSİYON AYARLAYICI
+elif page == "± PORSİYON":
+    st.header("± Porsiyon Ayarlayıcı")
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        # Transfer edilen içerik kontrolü
+        default_text = st.session_state.get('transfer_content', '')
+        if default_text: st.info("Bir tarif aktarıldı.")
+        
+        recipe_text = st.text_area("Orijinal Tarif", value=default_text, height=200, placeholder="Tarifi buraya yapıştırın...")
+        servings = st.number_input("Yeni Kişi Sayısı", min_value=1, value=4)
+        
+        if st.button("Hesapla", type="primary", disabled=not recipe_text, use_container_width=True):
+            with st.spinner("Miktarlar hesaplanıyor..."):
+                prompt = f"Bu tarifi tam olarak {servings} kişilik olacak şekilde tüm malzeme miktarlarını yeniden hesapla ve tarifi yeniden yaz.\n\n{recipe_text}"
+                res = call_gemini_api([{"text": prompt}], "Sen bir mutfak matematikçisisin.", api_key)
+                st.session_state['scale_res'] = res
+                if default_text: st.session_state['transfer_content'] = "" # Temizle
 
-        with view_col:
-            st.subheader("📝 Seçilen Tarif")
-            
-            # Seçili tarifi Session State'ten al
-            selected_index = st.session_state.get('selected_recipe_index')
-            
-            if selected_index is not None and 0 <= selected_index < len(st.session_state['saved_recipes']):
-                selected_recipe = st.session_state['saved_recipes'][selected_index]
+    with col2:
+        if 'scale_res' in st.session_state and st.session_state['scale_res']:
+            with st.container(border=True):
+                st.markdown(st.session_state['scale_res'])
+            render_save_section(st.session_state['scale_res'], f"Tarif ({servings} Kişilik)", "Porsiyon Ayarlayıcı", "scale")
+
+# 6. TARİF DEFTERİM (KALICI HAFIZA)
+elif page == "📒 TARİF DEFTERİM":
+    st.header("📒 Tarif Defterim")
+    
+    recipes = get_all_recipes()
+    
+    if not recipes:
+        st.info("Henüz kaydedilmiş bir tarifiniz yok. Diğer araçları kullanarak tarif oluşturun ve kaydedin!")
+    else:
+        col_list, col_view = st.columns([1, 3])
+        
+        with col_list:
+            st.subheader("Liste")
+            selected_id = st.radio(
+                "Tarif Seçin:", 
+                [r['id'] for r in recipes], 
+                format_func=lambda x: next(r['title'] for r in recipes if r['id'] == x)
+            )
+        
+        with col_view:
+            if selected_id:
+                # Seçili tarifi bul
+                recipe = next(r for r in recipes if r['id'] == selected_id)
                 
-                st.title(selected_recipe['title'])
-                st.markdown(f"**Kaynak:** *{selected_recipe['source']}*")
+                # Başlık ve Meta Bilgiler
+                st.markdown(f"## {recipe['title']}")
+                st.caption(f"📅 {recipe['created_at']} | 🔗 Kaynak: {recipe['source']}")
                 st.markdown("---")
                 
-                # Tarif içeriği
-                with st.container(border=True, height=500):
-                    st.markdown(selected_recipe['content'])
+                # İçerik
+                with st.container(border=True):
+                    st.markdown(recipe['content'])
                 
-                st.markdown("---")
-                # Butonlar için kolonlar
-                btn_col1, btn_col2 = st.columns(2)
+                # Aksiyon Butonları
+                st.markdown("### İşlemler")
+                ac1, ac2, ac3 = st.columns(3)
                 
-                with btn_col1:
-                    # Porsiyon Ayarlayıcıya Gönder
-                    if st.button(f"🚀 Porsiyon Ayarlayıcıya Gönder", key="transfer_recipe_btn", use_container_width=True, help="Bu tarifi porsiyon ayarlama aracına aktarır."):
-                        st.session_state['recipe_transfer_content'] = selected_recipe['content'] # İçeriği transfer anahtarına kaydet
-                        st.session_state['current_page'] = "± PORSİYON AYARLAYICI" # Hedef sayfayı ayarla
-                        st.rerun() # Sayfa değişimini zorla
-                
-                with btn_col2:
-                    # Silme butonu
-                    if st.button(f"🗑️ Bu Tarifi Sil", key="delete_recipe_btn", type="secondary", use_container_width=True):
-                        # Silme işlemi
-                        del st.session_state['saved_recipes'][selected_index]
-                        
-                        # Seçim indeksini güncelle
-                        if len(st.session_state['saved_recipes']) > 0:
-                            # Eğer silinen son tarif değilse, bir öncekini seç
-                            new_index = max(0, selected_index - 1)
-                            st.session_state['selected_recipe_index'] = new_index
-                        else:
-                            st.session_state['selected_recipe_index'] = None
-                            
-                        st.success(f"'{selected_recipe['title']}' tarifi başarıyla silindi.")
+                with ac1:
+                    if st.button("🚀 Porsiyonla", help="Bu tarifi Porsiyon Ayarlayıcıya gönder"):
+                        st.session_state['transfer_content'] = recipe['content']
+                        st.session_state['current_page'] = "± PORSİYON"
                         st.rerun()
-            else:
-                 st.info("Lütfen soldaki listeden bir tarif seçin.")
-
-
-# --- 7. Malzeme İkamesi Alanı ---
-elif selected_page == "🔄 MALZEME İKAMESİ":
-    st.header(PAGES[selected_page])
-    st.markdown("Elinizde olmayan veya kullanmak istemediğiniz bir malzeme için en iyi ikameleri, kullanım amaçlarına göre oranlarıyla birlikte öğrenin.")
-
-    col5, col6 = st.columns([1, 2])
-
-    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
-    if 'last_substitute_output' not in st.session_state:
-        st.session_state['last_substitute_output'] = ""
-
-    with col5:
-        # Girdi Alanı
-        ingredient_to_substitute = st.text_input(
-            "Hangi Malzemeyi İkame Etmek İstiyorsunuz?", 
-            key="substitute_ingredient_input",
-            placeholder="Örn: Yumurta, Süt, Buğday Unu, Tereyağı"
-        )
-            
-        context_reason = st.text_input(
-            "İkame Nedeni/Kullanım Amacı (Zorunlu Değil)", 
-            key="substitute_reason_input",
-            placeholder="Örn: Vegan tarif için, daha az yağlı olması için, bağlayıcı olarak"
-        )
-
-        is_substitute_ready = bool(api_key and ingredient_to_substitute)
-
-        if st.button("🔄 İkame Alternatiflerini Bul", key="find_substitute_btn", disabled=not is_substitute_ready, use_container_width=True):
-            if is_substitute_ready:
-                with st.spinner('İkame alternatifleri aranıyor...'):
-                    try:
-                        system_prompt_substitute = "Sen mutfak uzmanı bir ikame profesyelisin. Görevin, verilen malzeme için en uygun, pratik ve ölçüleri belirten ikame alternatiflerini TAMAMEN Türkçe olarak sunmaktır. Yanıtın, her ikame için neden uygun olduğunu, hangi durumlarda kullanıldığını ve en önemlisi **ikame oranını (Örn: 1:1, 1 yumurta yerine 1/4 fincan elma püresi)** açıkça belirtmelidir. Markdown tablolarını veya listelerini kullan."
+                
+                with ac2:
+                    if st.button("♻️ Uyarla", help="Bu tarifi Uyarlama aracına gönder"):
+                        st.session_state['transfer_content'] = recipe['content']
+                        st.session_state['current_page'] = "♻️ TARİF UYARLAMA"
+                        st.rerun()
                         
-                        reason_text = f"'{context_reason}' amacı/sebebiyle" if context_reason else "genel olarak"
-                        
-                        user_query_substitute = f"Lütfen '{ingredient_to_substitute}' malzemesini, {reason_text} ikame edebileceğim en iyi 3-5 alternatif ve bunların ikame oranlarını tablo formatında veya detaylı liste halinde ver."
-                        
-                        parts_list_substitute = [
-                            {"text": user_query_substitute}
-                        ]
-                        
-                        # Web aramasına gerek olmadığı için use_search_grounding=False (varsayılan)
-                        result_text_substitute = call_gemini_api(parts_list_substitute, system_prompt_substitute, api_key)
-                        st.session_state['last_substitute_output'] = result_text_substitute
-                            
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-            else:
-                st.info("Lütfen ikame etmek istediğiniz malzemeyi girin.")
+                with ac3:
+                    if st.button("🗑️ Sil", type="primary"):
+                        delete_recipe_from_db(recipe['id'])
+                        st.toast("Tarif silindi!", icon="🗑️")
+                        st.rerun()
+
+# Diğer basit araçlar (İkame, Çevirici, Saklama, Liste) için standart yapı...
+elif page in ["🔄 İKAME", "⚖️ ÇEVİRİCİ", "🌡️ SAKLAMA", "📝 LİSTE"]:
+    st.header(page)
     
-    with col6:
-        st.subheader("✅ İkame Alternatifleri")
-        with st.container(border=True, height=500):
-            if 'last_substitute_output' in st.session_state and st.session_state['last_substitute_output']:
-                st.markdown(st.session_state['last_substitute_output'])
-            else:
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Malzemeyi ve ikame nedeninizi girdikten sonra, pratik ve ölçüleriyle birlikte en uygun alternatifler burada listelenecektir.
-                    </p>
-                    """, unsafe_allow_html=True)
-
-
-# --- 8. Ölçü Çevirici Alanı (ÇİFT YÖNLÜ ve TR BAZLI) ---
-elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
-    st.header(PAGES[selected_page])
-    st.markdown("Hacim (Bardak, kaşık, ml, L) ve Ağırlık (Gram, kg) ölçülerini, seçtiğiniz malzemenin yoğunluğuna göre hassas bir şekilde çevirin. Çeviriler Türkiye mutfağı standartlarına uygundur.")
-
-    col7, col8 = st.columns([1, 2])
-    
-    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
-    if 'last_converter_output' not in st.session_state:
-        st.session_state['last_converter_output'] = ""
-
-    with col7:
-        # Çeviri Yönü Seçimi
-        conversion_type = st.radio(
-            "Çeviri Yönü",
-            ('Hacim ➡️ Ağırlık (Örn: Bardak Un kaç gramdır?)', 'Ağırlık ➡️ Hacim (Örn: 100 gram Un kaç bardaktır?)'),
-            key="conversion_type_select",
-            horizontal=True
-        )
-
-        # Hacim Birimleri ve Ağırlık Birimleri (Türkiye standartlarına uygun olarak güncellendi)
-        VOLUME_UNITS = [
-            'Bardak', 
-            'Yemek Kaşığı', 
-            'Tatlı Kaşığı', 
-            'Çay Kaşığı', 
-            'Mililitre (ml)', 
-            'Litre (L)'
-        ]
-        WEIGHT_UNITS = ['Gram (g)', 'Kilogram (kg)', 'Ons (oz)', 'Pound (lb)']
-
-        # Çeviri Yönüne göre birimlerin belirlenmesi
-        if conversion_type == 'Hacim ➡️ Ağırlık (Örn: Bardak Un kaç gramdır?)':
-            source_units = VOLUME_UNITS
-            target_units = WEIGHT_UNITS
-        else:
-            source_units = WEIGHT_UNITS
-            target_units = VOLUME_UNITS
+    # Bu sayfalar için ortak basit yapı
+    if page == "🔄 İKAME":
+        inp = st.text_input("Malzeme", placeholder="Örn: Yumurta")
+        reason = st.text_input("Amaç (Opsiyonel)", placeholder="Vegan olması için")
+        btn_txt = "İkame Bul"
+        prompt_tmpl = "Bunun yerine ne kullanabilirim: {inp}. Amaç: {reason}."
         
-        # Ağırlık/Miktar Girişi
-        col_amount, col_unit = st.columns([2, 3])
-        with col_amount:
-            amount_input = st.number_input(
-                "Miktar", 
-                min_value=0.01, 
-                value=1.0, 
-                step=0.5,
-                key="convert_amount_input"
-            )
+    elif page == "⚖️ ÇEVİRİCİ":
+        inp = st.text_input("Çevrilecek Ölçü", placeholder="Örn: 1 bardak un kaç gram?")
+        reason = ""
+        btn_txt = "Çevir"
+        prompt_tmpl = "Mutfak ölçüsü çevirisi yap: {inp}. Türk standartlarını kullan."
         
-        # Kaynak Birim Seçimi
-        with col_unit:
-            source_unit_select = st.selectbox(
-                "Kaynak Birim",
-                source_units,
-                key="convert_source_unit_select"
-            )
-
+    elif page == "🌡️ SAKLAMA":
+        inp = st.text_input("Yemek/Gıda", placeholder="Örn: Pişmiş Tavuk")
+        reason = ""
+        btn_txt = "Bilgi Al"
+        prompt_tmpl = "{inp} için güvenli saklama süreleri (dolap/buzluk) ve saklama koşulları nedir?"
         
-        # Malzeme Girişi (En kritik kısım)
-        ingredient_input_value = st.text_input(
-            "Malzeme (Zorunlu)", 
-            key="convert_ingredient_input_key", 
-            placeholder="Örn: Buğday Unu, Toz Şeker, Tereyağı, Su",
-        )
-            
+    elif page == "📝 LİSTE":
+        inp = st.text_area("Dağınık Liste", height=150)
+        reason = ""
+        btn_txt = "Düzenle"
+        prompt_tmpl = "Bu alışveriş listesini market reyonlarına göre kategorize et ve birleştir: {inp}"
+
+    if st.button(btn_txt, type="primary", disabled=not inp):
+        with st.spinner("İşleniyor..."):
+            final_prompt = prompt_tmpl.format(inp=inp, reason=reason)
+            res = call_gemini_api([{"text": final_prompt}], "Sen uzman bir mutfak asistanısın.", api_key)
+            st.session_state[f'res_{page}'] = res
+    
+    if f'res_{page}' in st.session_state and st.session_state[f'res_{page}']:
+        with st.container(border=True):
+            st.markdown(st.session_state[f'res_{page}'])
         
-        # Hedef Birim Seçimi
-        target_unit_select = st.selectbox(
-            "Hedef Birim",
-            target_units,
-            key="convert_target_unit_select"
-        )
-
-        # Güncel malzeme değeri session state'den okunur
-        current_ingredient = st.session_state.get("convert_ingredient_input_key")
-        is_converter_ready = bool(api_key and amount_input > 0 and current_ingredient)
-
-        if st.button("⚖️ Hesapla ve Çevir", key="calculate_conversion_btn", disabled=not is_converter_ready, use_container_width=True):
-            if is_converter_ready:
-                with st.spinner('Yoğunluğa özel ve Türkiye mutfağı standartlarına göre çeviri hesaplanıyor...'):
-                    try:
-                        system_prompt_converter = (
-                            "Sen, mutfak ölçü birimleri ve gıda yoğunlukları konusunda uzman, titiz bir asistansın. "
-                            "Görevin, verilen miktarı, başlangıç birimini, malzemeyi ve hedef birimi dikkate alarak, "
-                            "özellikle **Türkiye mutfağında standart kabul edilen ölçüleri (örn: 1 yemek kaşığı yaklaşık 15 ml, 1 bardak yaklaşık 200 ml)** "
-                            "kullanarak doğru çeviriyi ve bu çevirinin nedenini veya varsayımlarını (kullanılan yoğunluk değeri gibi) açıklamaktır. "
-                            "Yanıtın yalnızca sonuç ve kısa bir açıklama içermelidir. Sonucu kalın ve büyük yazılarla belirt."
-                        )
-                        
-                        user_query_converter = (
-                            f"Lütfen '{amount_input} {source_unit_select}' miktarındaki '{current_ingredient}' malzemesini, "
-                            f"'{target_unit_select}' birimine çevir. Çeviri yaparken lütfen Türkiye mutfak ölçütlerini (bardak, kaşık) referans al. "
-                            f"Sonucu ve nedenini (kullanılan yoğunluk) açıklayarak ver."
-                        )
-                        
-                        parts_list_converter = [
-                            {"text": user_query_converter}
-                        ]
-
-                        # API Çağrısı. use_search_grounding=False (varsayılan)
-                        result_text_converter = call_gemini_api(parts_list_converter, system_prompt_converter, api_key)
-                        st.session_state['last_converter_output'] = result_text_converter
-                            
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-            else:
-                st.info("Lütfen çevrilecek miktarı ve malzemeyi eksiksiz girin.")
-    
-    with col8:
-        st.subheader("✅ Hesaplama Sonucu")
-        with st.container(border=True, height=500):
-            if 'last_converter_output' in st.session_state and st.session_state['last_converter_output']:
-                st.markdown(st.session_state['last_converter_output'])
-            else:
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Çeviri yönünü, miktarı, birimi ve malzemeyi girdikten sonra, malzemenin yoğunluğuna özel çeviri sonucu burada görünecektir.
-                    </p>
-                    """, unsafe_allow_html=True)
-                 
-# --- 9. Sıcaklık ve Saklama Rehberi Alanı ---
-elif selected_page == "🌡️ SAKLAMA REHBERİ":
-    st.header(PAGES[selected_page])
-    st.markdown("Yemeğinizin güvenli iç sıcaklığını, buzdolabında ve dondurucuda ne kadar süre saklanabileceğini öğrenerek gıda güvenliğini sağlayın.")
-
-    col9, col10 = st.columns([1, 2])
-    
-    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
-    if 'last_storage_output' not in st.session_state:
-        st.session_state['last_storage_output'] = ""
-
-    with col9:
-        # Girdi Alanı
-        food_item = st.text_input(
-            "Hangi Yemeği/Gıdayı Soruyorsunuz?", 
-            key="food_item_storage_input",
-            placeholder="Örn: Fırında Tavuk Göğsü, Pişmiş Pirinç, Ev Yapımı Pesto Sosu"
-        )
-        
-        is_storage_ready = bool(api_key and food_item)
-
-        if st.button("🌡️ Saklama Bilgilerini Bul", key="find_storage_info_btn", disabled=not is_storage_ready, use_container_width=True):
-            if is_storage_ready:
-                with st.spinner(f"'{food_item}' için gıda güvenliği ve saklama koşulları aranıyor..."):
-                    try:
-                        system_prompt_storage = (
-                            "Sen bir gıda güvenliği ve saklama uzmanısısın. Görevin, verilen gıda veya yemek için, özellikle Türk mutfağında yaygın olan yemekleri de dikkate alarak, güvenli pişirme sıcaklıklarını (gerekiyorsa), maksimum buzdolabı ve dondurucu saklama sürelerini ve saklama önerilerini (hava geçirmez kaplar gibi) TAMAMEN Türkçe olarak sunmaktır. Çıktıda kesin değerler ve önemli güvenlik notları bulunmalıdır. Markdown başlıkları ve listeleri kullan."
-                        )
-                        
-                        user_query_storage = (
-                            f"Lütfen '{food_item}' için, **pişmiş hali için** (eğer bir yemekse) veya gıdanın kendisi için aşağıdaki bilgileri sağla:\n"
-                            "1. Tüketim için güvenli iç sıcaklık (gerekiyorsa).\n"
-                            "2. Buzdolabında güvenli saklama süresi (maksimum gün).\n"
-                            "3. Dondurucuda güvenli saklama süresi (maksimum ay/hafta).\n"
-                            "4. En iyi saklama önerileri (kap, paketleme)."
-                        )
-                        
-                        parts_list_storage = [
-                            {"text": user_query_storage}
-                        ]
-
-                        # API Çağrısı. Web araması için use_search_grounding=True kullanıyoruz.
-                        result_text_storage = call_gemini_api(parts_list_storage, system_prompt_storage, api_key, use_search_grounding=True)
-                        st.session_state['last_storage_output'] = result_text_storage
-                            
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-            else:
-                st.info("Lütfen bilgi almak istediğiniz yemeği veya gıdayı girin.")
-    
-    with col10:
-        st.subheader("✅ Sıcaklık ve Saklama Koşulları")
-        with st.container(border=True, height=500):
-            if 'last_storage_output' in st.session_state and st.session_state['last_storage_output']:
-                st.markdown(st.session_state['last_storage_output'])
-            else:
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Yemek adını girdikten sonra, gıda güvenliği açısından kritik olan pişirme sıcaklıkları ve güvenli saklama süreleri burada görünecektir.
-                    </p>
-                    """, unsafe_allow_html=True)
-
-
-# --- 10. Akıllı Alışveriş Listesi Alanı ---
-elif selected_page == "📝 ALIŞVERİŞ LİSTESİ":
-    st.header(PAGES[selected_page])
-    st.markdown("Birden fazla tariften gelen dağınık alışveriş listesi metinlerini yapıştırın. Yapay zeka listeyi birleştirsin, miktarları toplasın ve market reyonlarına göre organize etsin!")
-
-    col11, col12 = st.columns([1, 2])
-    
-    # Varsayılan değer olarak varsa son kullanılan tarifi yapıştıralım
-    default_list_text = ""
-    last_recipe_output = st.session_state.get('last_recipe_output', '')
-    if last_recipe_output:
-        # Basit bir regex ile alışveriş listesi başlığı altındaki metni çekmeye çalışalım
-        match = re.search(r'(#+\s*Alışveriş Listesi.*?)(#+|$)', last_recipe_output, re.DOTALL | re.IGNORECASE)
-        if match:
-            # Sadece alışveriş listesi içeriğini al
-            list_content = match.group(1)
-            # Eğer bir sonraki başlık varsa onu kaldır
-            list_content = re.sub(r'#+$', '', list_content).strip()
-            default_list_text = list_content
-    
-    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
-    if 'last_organizer_output' not in st.session_state:
-        st.session_state['last_organizer_output'] = ""
-
-    with col11:
-        shopping_list_input = st.text_area(
-            "Dağınık Alışveriş Listesi Girdileri", 
-            height=300, 
-            key="shopping_list_input_area",
-            placeholder="Örn:\n2 adet domates\n500 gr un\n1 kutu krema\n3 adet yumurta\n250g tereyağı\n1 kg pirinç\n3 yumurta",
-            value=default_list_text
-        )
-        
-        is_list_ready = bool(api_key and shopping_list_input)
-
-        if st.button("📝 Listeyi Düzenle ve Reyonlara Ayır", key="organize_list_btn", disabled=not is_list_ready, use_container_width=True):
-            if is_list_ready:
-                with st.spinner("Alışveriş listesi birleştiriliyor, toplanıyor ve reyonlara ayrılıyor..."):
-                    try:
-                        system_prompt_organizer = (
-                            "Sen bir alışveriş listesi düzenleme uzmanısısın. Görevin, kullanıcının verdiği dağınık listedeki tüm maddeleri birleştirmek, aynı maddelerin miktarlarını toplamak (mantıklı bir şekilde) ve listeyi TAMAMEN Türkçe olarak, market reyonlarına göre kategorize edilmiş bir Markdown listesi halinde sunmaktır. Miktarları ve birimleri koru. Örneğin, 'Süt Ürünleri', 'Sebze/Meyve', 'Kuru Gıdalar', 'Et/Kasap' gibi mantıklı reyon başlıkları kullan."
-                        )
-                        
-                        user_query_organizer = (
-                            f"Aşağıdaki dağınık alışveriş listesini al, aynı maddeleri birleştir ve miktarlarını topla. Sonra listeyi market reyonlarına göre kategorize ederek bana sun:\n\n"
-                            f"--- Liste ---\n{shopping_list_input}"
-                        )
-                        
-                        parts_list_organizer = [
-                            {"text": user_query_organizer}
-                        ]
-
-                        # API Çağrısı. use_search_grounding=False (varsayılan)
-                        result_text_organizer = call_gemini_api(parts_list_organizer, system_prompt_organizer, api_key)
-                        st.session_state['last_organizer_output'] = result_text_organizer
-                            
-                    except Exception as e:
-                        st.error(f"Genel Hata: {e}")
-            else:
-                st.info("Lütfen düzenlemek istediğiniz listeyi girin.")
-    
-    with col12:
-        st.subheader("✅ Organize Edilmiş Alışveriş Listesi")
-        with st.container(border=True, height=500):
-            if 'last_organizer_output' in st.session_state and st.session_state['last_organizer_output']:
-                st.markdown(st.session_state['last_organizer_output'])
-            else:
-                 st.markdown("""
-                    <p class="text-center text-gray-500 italic mt-8">
-                        Dağınık listenizi buraya yapıştırdıktan sonra, market reyonlarına göre düzenlenmiş, birleştirilmiş ve toplanmış akıllı alışveriş listeniz burada görünecektir.
-                        <br><br>
-                        *İyi alışverişler!*
-                    </p>
-                    """, unsafe_allow_html=True)
+        # Bu araçların sonuçları genelde kısa bilgi notlarıdır, ama yine de kaydedilebilir.
+        # Liste için başlık "Alışveriş Listesi", diğerleri için girdi adı.
+        def_title = "Alışveriş Listesi" if page == "📝 LİSTE" else (inp if len(inp)<20 else inp[:20])
+        render_save_section(st.session_state[f'res_{page}'], def_title, page, "tool")
