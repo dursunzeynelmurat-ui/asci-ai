@@ -264,6 +264,10 @@ if 'selected_recipe_index' not in st.session_state:
 # Anlık tarif arama çıktısı
 if 'last_search_recipe_output' not in st.session_state:
     st.session_state['last_search_recipe_output'] = ""
+    
+# Tarif dedektörü çıktısı
+if 'last_recipe_output' not in st.session_state:
+    st.session_state['last_recipe_output'] = ""
 
 # Sayfa seçimi için oturum durumu
 if 'current_page' not in st.session_state:
@@ -355,12 +359,20 @@ if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
                                 
                                 st.markdown("---")
                                 st.subheader("Kaydet")
-                                recipe_title = st.text_input("Tarif Başlığı (Kaydetmek için)", key="save_title_recipe_dedector", placeholder="Örn: Ev Yapımı Lazanya")
-                                if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_dedector_btn", disabled=not recipe_title):
+                                # Kaydetme işlemi için, çıktının varlığını kontrol et
+                                is_save_ready = st.session_state.get('last_recipe_output') not in [None, ""]
+                                
+                                recipe_title = st.text_input(
+                                    "Tarif Başlığı (Kaydetmek için)", 
+                                    key="save_title_recipe_dedector", 
+                                    placeholder="Örn: Ev Yapımı Lazanya",
+                                    disabled=not is_save_ready
+                                )
+                                if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_dedector_btn", disabled=not (recipe_title and is_save_ready)):
                                     if recipe_title:
                                         st.session_state['saved_recipes'].append({
                                             'title': recipe_title,
-                                            'content': result_text,
+                                            'content': st.session_state['last_recipe_output'], # Kayıt için session state'ten al
                                             'source': 'Tarif Dedektörü'
                                         })
                                         # Kayıt yapıldıktan sonra seçili tarifi sıfırlayalım ki kullanıcı listeyi kontrol edebilsin
@@ -408,6 +420,9 @@ elif selected_page == "🔎 TARİF ARAMA":
 
         if st.button("🔎 Tarifi Anında Bul", key="search_recipe_btn", disabled=not is_search_ready, use_container_width=True):
             if is_search_ready:
+                # Önceki çıktıyı temizle
+                st.session_state['last_search_recipe_output'] = ""
+                
                 with st.spinner(f"'{recipe_name_search}' için en güncel tarif web'de aranıyor..."):
                     try:
                         # Bu sorgu için web aramasını etkinleştiriyoruz
@@ -426,6 +441,8 @@ elif selected_page == "🔎 TARİF ARAMA":
 
                         # API Çağrısı: use_search_grounding=True ile web'e erişimi etkinleştir
                         result_text_search = call_gemini_api(parts_list_search, system_prompt_search, api_key, use_search_grounding=True)
+                        
+                        # Çıktıyı session state'e kaydet
                         st.session_state['last_search_recipe_output'] = result_text_search
 
                         with col_s2:
@@ -436,14 +453,25 @@ elif selected_page == "🔎 TARİF ARAMA":
                                      
                                      st.markdown("---")
                                      st.subheader("Kaydet")
-                                     recipe_title_search = st.text_input("Tarif Başlığı (Kaydetmek için)", key="save_title_recipe_search", value=recipe_name_search, placeholder="Örn: İrmik Helvası")
                                      
-                                     # KAYDETME BUTONU (Zaten vardı, kontrol edildi)
-                                     if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_search_btn", disabled=not recipe_title_search):
+                                     # Kayıt için çıktının varlığını kontrol et
+                                     is_save_ready_search = st.session_state.get('last_search_recipe_output') not in [None, ""]
+                                     
+                                     recipe_title_search = st.text_input(
+                                         "Tarif Başlığı (Kaydetmek için)", 
+                                         key="save_title_recipe_search", 
+                                         value=recipe_name_search, 
+                                         placeholder="Örn: İrmik Helvası",
+                                         disabled=not is_save_ready_search
+                                     )
+                                     
+                                     # KAYDETME BUTONU - Şimdi session state'ten okuyarak çalışacak
+                                     if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_search_btn", disabled=not (recipe_title_search and is_save_ready_search)):
                                         if recipe_title_search:
+                                            # Kayıt işlemi için session state'teki sonucu kullan
                                             st.session_state['saved_recipes'].append({
                                                 'title': recipe_title_search,
-                                                'content': result_text_search,
+                                                'content': st.session_state['last_search_recipe_output'],
                                                 'source': 'Tarif Arama (Web)'
                                             })
                                             st.session_state['selected_recipe_index'] = len(st.session_state['saved_recipes']) - 1
@@ -531,9 +559,18 @@ elif selected_page == "🧊 DOLAP ŞEFİ":
                 
                 st.markdown("---")
                 st.subheader("Tarifi Kaydet")
-                recipe_title_full = st.text_input("Tarif Başlığı (Kaydetmek için)", key="save_title_recipe_full_fridge", value=full_recipe['title'], placeholder="Örn: Kolay Mercimek Çorbası")
                 
-                if st.button("💾 Bu Tam Tarifi Kaydet", key="save_recipe_full_fridge_btn", disabled=not recipe_title_full):
+                is_save_ready_fridge = full_recipe.get('content') not in [None, ""]
+                
+                recipe_title_full = st.text_input(
+                    "Tarif Başlığı (Kaydetmek için)", 
+                    key="save_title_recipe_full_fridge", 
+                    value=full_recipe['title'], 
+                    placeholder="Örn: Kolay Mercimek Çorbası",
+                    disabled=not is_save_ready_fridge
+                )
+                
+                if st.button("💾 Bu Tam Tarifi Kaydet", key="save_recipe_full_fridge_btn", disabled=not (recipe_title_full and is_save_ready_fridge)):
                     if recipe_title_full:
                         st.session_state['saved_recipes'].append({
                             'title': recipe_title_full,
@@ -613,6 +650,10 @@ elif selected_page == "♻️ TARİF UYARLAMA":
     
     adapt_col1, adapt_col2 = st.columns([1, 2])
 
+    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
+    if 'last_adapt_output' not in st.session_state:
+        st.session_state['last_adapt_output'] = ""
+
     with adapt_col1:
         if st.button("♻️ Tarifi Uyarlama", key="adapt_recipe_btn", disabled=not is_adapt_ready, use_container_width=True):
             if is_adapt_ready:
@@ -670,6 +711,10 @@ elif selected_page == "± PORSİYON AYARLAYICI":
         initial_recipe_text = st.session_state['last_recipe_output']
     else:
         initial_recipe_text = ""
+        
+    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
+    if 'last_scale_output' not in st.session_state:
+        st.session_state['last_scale_output'] = ""
 
     recipe_to_scale = st.text_area(
         "Porsiyonu Ayarlanacak Tarif Metni", 
@@ -722,12 +767,21 @@ elif selected_page == "± PORSİYON AYARLAYICI":
                                      
                                      st.markdown("---")
                                      st.subheader("Kaydet")
-                                     recipe_title_scale = st.text_input("Tarif Başlığı (Kaydetmek için)", key="save_title_recipe_scaler", placeholder="Örn: 8 Kişilik Tiramisu")
-                                     if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_scaler_btn", disabled=not recipe_title_scale):
+                                     
+                                     is_save_ready_scale = st.session_state.get('last_scale_output') not in [None, ""]
+                                     
+                                     recipe_title_scale = st.text_input(
+                                         "Tarif Başlığı (Kaydetmek için)", 
+                                         key="save_title_recipe_scaler", 
+                                         placeholder="Örn: 8 Kişilik Tiramisu",
+                                         disabled=not is_save_ready_scale
+                                     )
+                                     
+                                     if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_scaler_btn", disabled=not (recipe_title_scale and is_save_ready_scale)):
                                         if recipe_title_scale:
                                             st.session_state['saved_recipes'].append({
                                                 'title': recipe_title_scale,
-                                                'content': result_text_scale,
+                                                'content': st.session_state['last_scale_output'],
                                                 'source': f'Porsiyon Ayarlayıcı ({target_servings} Kişi)'
                                             })
                                             # Kayıt yapıldıktan sonra seçili tarifi sıfırlayalım ki kullanıcı listeyi kontrol edebilsin
@@ -845,6 +899,10 @@ elif selected_page == "🔄 MALZEME İKAMESİ":
 
     col5, col6 = st.columns([1, 2])
 
+    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
+    if 'last_substitute_output' not in st.session_state:
+        st.session_state['last_substitute_output'] = ""
+
     with col5:
         # Girdi Alanı
         ingredient_to_substitute = st.text_input(
@@ -903,6 +961,10 @@ elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
     st.markdown("Hacim (Bardak, kaşık, ml, L) ve Ağırlık (Gram, kg) ölçülerini, seçtiğiniz malzemenin yoğunluğuna göre hassas bir şekilde çevirin. Çeviriler Türkiye mutfağı standartlarına uygundur.")
 
     col7, col8 = st.columns([1, 2])
+    
+    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
+    if 'last_converter_output' not in st.session_state:
+        st.session_state['last_converter_output'] = ""
 
     with col7:
         # Çeviri Yönü Seçimi
@@ -1020,6 +1082,10 @@ elif selected_page == "🌡️ SAKLAMA REHBERİ":
     st.markdown("Yemeğinizin güvenli iç sıcaklığını, buzdolabında ve dondurucuda ne kadar süre saklanabileceğini öğrenerek gıda güvenliğini sağlayın.")
 
     col9, col10 = st.columns([1, 2])
+    
+    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
+    if 'last_storage_output' not in st.session_state:
+        st.session_state['last_storage_output'] = ""
 
     with col9:
         # Girdi Alanı
@@ -1093,6 +1159,10 @@ elif selected_page == "📝 ALIŞVERİŞ LİSTESİ":
             list_content = re.sub(r'#+$', '', list_content).strip()
             default_list_text = list_content
     
+    # Yeni çıktıyı saklamak için session state anahtarı (Varsa eskiyi koru)
+    if 'last_organizer_output' not in st.session_state:
+        st.session_state['last_organizer_output'] = ""
+
     with col11:
         shopping_list_input = st.text_area(
             "Dağınık Alışveriş Listesi Girdileri", 
