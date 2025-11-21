@@ -72,6 +72,10 @@ def call_gemini_api(parts_list, system_instruction, api_key):
         if not text:
             # Geçerli metin yanıtı yoksa hata mesajını kontrol et
             error_message = result.get('error', {}).get('message', 'Bilinmeyen bir API yanıt hatası.')
+            # Buradaki hata kontrolünü basitleştiriyoruz, kullanıcıya gösterdiğimizden emin olalım
+            if response.status_code != 200:
+                raise Exception(f"API Yanıt Kodu {response.status_code}. Detaylar: {response.text}")
+            
             raise Exception(f"API'den geçerli metin yanıtı alınamadı. Hata: {error_message}")
         
         return text
@@ -263,7 +267,10 @@ PAGES = {
     "± PORSİYON AYARLAYICI": "Tarif Porsiyonunu Otomatik Hesapla",
     "📒 TARİFLERİM": "Kayıtlı Tarifleriniz", 
     "🔄 MALZEME İKAMESİ": "Malzeme İkamesi Bulucu",
-    "⚖️ ÖLÇÜ ÇEVİRİCİ": "Malzemeye Özel Ölçü Çevirici (Hacim 🔄 Ağırlık)"
+    "⚖️ ÖLÇÜ ÇEVİRİCİ": "Malzemeye Özel Ölçü Çevirici",
+    # YENİ EKLENEN ÖZELLİKLER
+    "🌡️ SAKLAMA REHBERİ": "Gıda Güvenliği ve Saklama Sıcaklıkları",
+    "📝 ALIŞVERİŞ LİSTESİ": "Listeyi Birleştir ve Reyonlara Ayır",
 }
 
 # Yan panelde butonları listeleyerek menü oluşturma
@@ -880,5 +887,134 @@ elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
                  st.markdown("""
                     <p class="text-center text-gray-500 italic mt-8">
                         Çeviri yönünü, miktarı, birimi ve malzemeyi girdikten sonra, malzemenin yoğunluğuna özel çeviri sonucu burada görünecektir.
+                    </p>
+                    """, unsafe_allow_html=True)
+                 
+# --- 8. YENİ: Sıcaklık ve Saklama Rehberi Alanı ---
+elif selected_page == "🌡️ SAKLAMA REHBERİ":
+    st.header(PAGES[selected_page])
+    st.markdown("Yemeğinizin güvenli iç sıcaklığını, buzdolabında ve dondurucuda ne kadar süre saklanabileceğini öğrenerek gıda güvenliğini sağlayın.")
+
+    col9, col10 = st.columns([1, 2])
+
+    with col9:
+        food_item = st.text_input(
+            "Hangi Yemeği/Gıdayı Soruyorsunuz?", 
+            key="food_item_storage_input",
+            placeholder="Örn: Fırında Tavuk Göğsü, Pişmiş Pirinç, Ev Yapımı Pesto Sosu"
+        )
+        
+        is_storage_ready = bool(api_key and food_item)
+
+        if st.button("🌡️ Saklama Bilgilerini Bul", key="find_storage_info_btn", disabled=not is_storage_ready, use_container_width=True):
+            if is_storage_ready:
+                with st.spinner(f"'{food_item}' için gıda güvenliği ve saklama koşulları aranıyor..."):
+                    try:
+                        system_prompt_storage = (
+                            "Sen bir gıda güvenliği ve saklama uzmanısısın. Görevin, verilen gıda veya yemek için, özellikle Türk mutfağında yaygın olan yemekleri de dikkate alarak, güvenli pişirme sıcaklıklarını (gerekiyorsa), maksimum buzdolabı ve dondurucu saklama sürelerini ve saklama önerilerini (hava geçirmez kaplar gibi) TAMAMEN Türkçe olarak sunmaktır. Çıktıda kesin değerler ve önemli güvenlik notları bulunmalıdır. Markdown başlıkları ve listeleri kullan."
+                        )
+                        
+                        user_query_storage = (
+                            f"Lütfen '{food_item}' için, **pişmiş hali için** (eğer bir yemekse) veya gıdanın kendisi için aşağıdaki bilgileri sağla:\n"
+                            "1. Tüketim için güvenli iç sıcaklık (gerekiyorsa).\n"
+                            "2. Buzdolabında güvenli saklama süresi (maksimum gün).\n"
+                            "3. Dondurucuda güvenli saklama süresi (maksimum ay/hafta).\n"
+                            "4. En iyi saklama önerileri (kap, paketleme)."
+                        )
+                        
+                        parts_list_storage = [
+                            {"text": user_query_storage}
+                        ]
+
+                        # API Çağrısı
+                        result_text_storage = call_gemini_api(parts_list_storage, system_prompt_storage, api_key)
+                        st.session_state['last_storage_output'] = result_text_storage
+                            
+                    except Exception as e:
+                        st.error(f"Genel Hata: {e}")
+            else:
+                st.info("Lütfen bilgi almak istediğiniz yemeği veya gıdayı girin.")
+    
+    with col10:
+        st.subheader("✅ Sıcaklık ve Saklama Koşulları")
+        with st.container(border=True, height=500):
+            if 'last_storage_output' in st.session_state and st.session_state['last_storage_output']:
+                st.markdown(st.session_state['last_storage_output'])
+            else:
+                 st.markdown("""
+                    <p class="text-center text-gray-500 italic mt-8">
+                        Yemek adını girdikten sonra, gıda güvenliği açısından kritik olan pişirme sıcaklıkları ve güvenli saklama süreleri burada görünecektir.
+                    </p>
+                    """, unsafe_allow_html=True)
+
+
+# --- 9. YENİ: Akıllı Alışveriş Listesi Alanı ---
+elif selected_page == "📝 ALIŞVERİŞ LİSTESİ":
+    st.header(PAGES[selected_page])
+    st.markdown("Birden fazla tariften gelen dağınık alışveriş listesi metinlerini yapıştırın. Yapay zeka listeyi birleştirsin, miktarları toplasın ve market reyonlarına göre organize etsin!")
+
+    col11, col12 = st.columns([1, 2])
+    
+    # Varsayılan değer olarak varsa son kullanılan tarifi yapıştıralım
+    default_list_text = ""
+    last_recipe_output = st.session_state.get('last_recipe_output', '')
+    if last_recipe_output:
+        # Basit bir regex ile alışveriş listesi başlığı altındaki metni çekmeye çalışalım
+        match = re.search(r'(#+\s*Alışveriş Listesi.*?)(#+|$)', last_recipe_output, re.DOTALL | re.IGNORECASE)
+        if match:
+            # Sadece alışveriş listesi içeriğini al
+            list_content = match.group(1)
+            # Eğer bir sonraki başlık varsa onu kaldır
+            list_content = re.sub(r'#+$', '', list_content).strip()
+            default_list_text = list_content
+    
+    with col11:
+        shopping_list_input = st.text_area(
+            "Dağınık Alışveriş Listesi Girdileri", 
+            height=300, 
+            key="shopping_list_input_area",
+            placeholder="Örn:\n2 adet domates\n500 gr un\n1 kutu krema\n3 adet yumurta\n250g tereyağı\n1 kg pirinç\n3 yumurta",
+            value=default_list_text
+        )
+        
+        is_list_ready = bool(api_key and shopping_list_input)
+
+        if st.button("📝 Listeyi Düzenle ve Reyonlara Ayır", key="organize_list_btn", disabled=not is_list_ready, use_container_width=True):
+            if is_list_ready:
+                with st.spinner("Alışveriş listesi birleştiriliyor, toplanıyor ve reyonlara ayrılıyor..."):
+                    try:
+                        system_prompt_organizer = (
+                            "Sen bir alışveriş listesi düzenleme uzmanısısın. Görevin, kullanıcının verdiği dağınık listedeki tüm maddeleri birleştirmek, aynı maddelerin miktarlarını toplamak (mantıklı bir şekilde) ve listeyi TAMAMEN Türkçe olarak, market reyonlarına göre kategorize edilmiş bir Markdown listesi halinde sunmaktır. Miktarları ve birimleri koru. Örneğin, 'Süt Ürünleri', 'Sebze/Meyve', 'Kuru Gıdalar', 'Et/Kasap' gibi mantıklı reyon başlıkları kullan."
+                        )
+                        
+                        user_query_organizer = (
+                            f"Aşağıdaki dağınık alışveriş listesini al, aynı maddeleri birleştir ve miktarlarını topla. Sonra listeyi market reyonlarına göre kategorize ederek bana sun:\n\n"
+                            f"--- Liste ---\n{shopping_list_input}"
+                        )
+                        
+                        parts_list_organizer = [
+                            {"text": user_query_organizer}
+                        ]
+
+                        # API Çağrısı
+                        result_text_organizer = call_gemini_api(parts_list_organizer, system_prompt_organizer, api_key)
+                        st.session_state['last_organizer_output'] = result_text_organizer
+                            
+                    except Exception as e:
+                        st.error(f"Genel Hata: {e}")
+            else:
+                st.info("Lütfen düzenlemek istediğiniz listeyi girin.")
+    
+    with col12:
+        st.subheader("✅ Organize Edilmiş Alışveriş Listesi")
+        with st.container(border=True, height=500):
+            if 'last_organizer_output' in st.session_state and st.session_state['last_organizer_output']:
+                st.markdown(st.session_state['last_organizer_output'])
+            else:
+                 st.markdown("""
+                    <p class="text-center text-gray-500 italic mt-8">
+                        Dağınık listenizi buraya yapıştırdıktan sonra, market reyonlarına göre düzenlenmiş, birleştirilmiş ve toplanmış akıllı alışveriş listeniz burada görünecektir.
+                        <br><br>
+                        *İyi alışverişler!*
                     </p>
                     """, unsafe_allow_html=True)
