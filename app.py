@@ -178,6 +178,35 @@ st.markdown("""
         background-color: #e0f2f1; /* Açık Zümrüt Yeşili */
         border-right: 1px solid #10b981;
     }
+    /* Streamlit butonlarının varsayılan stilini değiştirerek menü butonu gibi görünmesini sağlıyoruz */
+    .sidebar .stButton>button[type="button"] {
+        white-space: normal;
+        text-align: left;
+        height: auto;
+        padding: 10px;
+        margin-bottom: 5px;
+        border-radius: 6px;
+        border: 1px solid rgba(0,0,0,0.1); /* Hafif bir çerçeve */
+        transition: background-color 0.2s, box-shadow 0.2s;
+        box-shadow: none;
+    }
+    /* Seçili menü butonu (primary tipinde) */
+    .sidebar .stButton>button[type="button"][kind="primary"] {
+        background-color: #10b981;
+        color: white;
+        font-weight: bold;
+        border-color: #059669;
+        box-shadow: 0 2px 4px rgba(16, 185, 129, 0.4);
+    }
+    /* Diğer menü butonları (secondary tipinde) */
+    .sidebar .stButton>button[type="button"][kind="secondary"] {
+        background-color: #ffffff;
+        color: #333333;
+    }
+    /* Hover efekti */
+    .sidebar .stButton>button[type="button"]:hover:not([kind="primary"]) {
+        background-color: #d1fae5; /* Çok açık yeşil */
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -214,10 +243,19 @@ if 'last_fridge_output' not in st.session_state:
 if 'generated_full_recipe' not in st.session_state:
     st.session_state['generated_full_recipe'] = None # {'title': '', 'content': ''}
 
+# Kayıtlı tariflerden hangisinin seçili olduğunu tutar
+if 'selected_recipe_index' not in st.session_state:
+    st.session_state['selected_recipe_index'] = None
+
+# Sayfa seçimi için oturum durumu
+if 'current_page' not in st.session_state:
+    st.session_state['current_page'] = "🍽️ Tarif DEDEKTÖRÜ"
+
+
 # --- Yan Panel (Sidebar) Navigasyonu ---
 st.sidebar.title("🛠️ Mutfak Araçları")
 
-# Sayfa seçenekleri 
+# Sayfa seçenekleri (Buton Etiketleri)
 PAGES = {
     "🍽️ Tarif DEDEKTÖRÜ": "Yemek Fotoğrafından Tarifi Çözümle",
     "🧊 DOLAP ŞEFİ": "Malzeme Fotoğrafından Yemek Önerileri",
@@ -228,13 +266,21 @@ PAGES = {
     "⚖️ ÖLÇÜ ÇEVİRİCİ": "Malzemeye Özel Ölçü Çevirici (Hacim 🔄 Ağırlık)"
 }
 
-selected_page = st.sidebar.selectbox(
-    "Lütfen bir araç seçin:",
-    list(PAGES.keys())
-)
+# Yan panelde butonları listeleyerek menü oluşturma
+for page_key, page_description in PAGES.items():
+    # Mevcut sayfa seçiliyse butonu "primary" (yeşil) yap, değilse "secondary" (beyaz)
+    button_type = "primary" if page_key == st.session_state['current_page'] else "secondary"
+    
+    if st.sidebar.button(f"{page_key} - {page_description}", key=f"nav_{page_key}", type=button_type, use_container_width=True):
+        st.session_state['current_page'] = page_key
+        st.rerun() # Sayfa değişimini zorla
 
 st.sidebar.markdown("---")
 st.sidebar.info("Yan paneldeki menüyü kullanarak araçlar arasında hızla geçiş yapabilirsiniz.")
+
+# Seçili sayfayı al
+selected_page = st.session_state['current_page']
+
 
 # --- Ana İçerik Alanı (Koşullu Renderlama) ---
 
@@ -292,6 +338,8 @@ if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
                                             'content': result_text,
                                             'source': 'Tarif Dedektörü'
                                         })
+                                        # Kayıt yapıldıktan sonra seçili tarifi sıfırlayalım ki kullanıcı listeyi kontrol edebilsin
+                                        st.session_state['selected_recipe_index'] = len(st.session_state['saved_recipes']) - 1
                                         st.success(f"'{recipe_title}' tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
                                         # Input'u temizle
                                         st.session_state["save_title_recipe_dedector"] = ""
@@ -387,6 +435,9 @@ elif selected_page == "🧊 DOLAP ŞEFİ":
                             'content': full_recipe['content'],
                             'source': 'Dolap Şefi (Tam Tarif)'
                         })
+                        # Kayıt yapıldıktan sonra seçili tarifi sıfırlayalım ki kullanıcı listeyi kontrol edebilsin
+                        st.session_state['selected_recipe_index'] = len(st.session_state['saved_recipes']) - 1
+
                         st.success(f"'{recipe_title_full}' tam tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
                         # Kaydettikten sonra tam tarif gösterimini sıfırla
                         st.session_state['generated_full_recipe'] = None
@@ -564,6 +615,9 @@ elif selected_page == "± PORSİYON AYARLAYICI":
                                                 'content': result_text_scale,
                                                 'source': f'Porsiyon Ayarlayıcı ({target_servings} Kişi)'
                                             })
+                                            # Kayıt yapıldıktan sonra seçili tarifi sıfırlayalım ki kullanıcı listeyi kontrol edebilsin
+                                            st.session_state['selected_recipe_index'] = len(st.session_state['saved_recipes']) - 1
+
                                             st.success(f"'{recipe_title_scale}' tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
                                             # Input'u temizle
                                             st.session_state["save_title_recipe_scaler"] = ""
@@ -587,7 +641,7 @@ elif selected_page == "± PORSİYON AYARLAYICI":
                     </p>
                     """, unsafe_allow_html=True)
 
-# --- 5. Tariflerim Alanı (YENİ ÖZELLİK) ---
+# --- 5. Tariflerim Alanı (Liste Görünümü) ---
 elif selected_page == "📒 TARİFLERİM":
     st.header(PAGES[selected_page])
     st.markdown("Kaydettiğiniz tarifleri buradan görüntüleyebilir ve yönetebilirsiniz.")
@@ -596,31 +650,46 @@ elif selected_page == "📒 TARİFLERİM":
     if not st.session_state.get('saved_recipes'):
         st.info("Henüz kaydedilmiş bir tarifiniz bulunmuyor. 'Tarif Dedektörü' veya 'Porsiyon Ayarlayıcı' sekmelerinde bir tarif oluşturup kaydedebilirsiniz.")
     else:
-        st.subheader(f"Toplam {len(st.session_state['saved_recipes'])} Kayıtlı Tarif")
+        # Sol Kolon: Tarif Listesi, Sağ Kolon: Tarif İçeriği
+        list_col, view_col = st.columns([1, 2])
         
-        # Gösterilecek tarifi seçmek için Selectbox
-        recipe_titles = [f"{i+1}. {r['title']} (Kaynak: {r['source']})" for i, r in enumerate(st.session_state['saved_recipes'])]
-        
-        # Eğer liste boş değilse (ki bu kontrol yukarıda yapıldı, ama yine de güvenliğe alalım)
-        if recipe_titles:
-            selected_recipe_index = st.selectbox(
-                "Görüntülenecek Tarifi Seçin", 
-                range(len(st.session_state['saved_recipes'])), 
-                format_func=lambda i: recipe_titles[i], 
-                key="recipe_viewer_select"
-            )
-            
-            # Seçilen tarifin içeriğini gösterme
-            if selected_recipe_index is not None:
-                selected_recipe = st.session_state['saved_recipes'][selected_recipe_index]
+        # Eğer tarifler varsa ve henüz bir seçim yapılmamışsa, ilk tarifi otomatik seç
+        if st.session_state.get('selected_recipe_index') is None:
+            st.session_state['selected_recipe_index'] = 0
+
+        with list_col:
+            st.subheader("📋 Kayıtlı Tarifler")
+            st.caption(f"Toplam {len(st.session_state['saved_recipes'])} Tarif")
+            st.markdown("---")
+
+            # Tarif listesi butonlar halinde gösterilir
+            for i, recipe in enumerate(st.session_state['saved_recipes']):
+                recipe_label = f"📖 {recipe['title']} ({recipe['source']})"
                 
-                st.markdown("---")
+                # Eğer bu tarif seçili ise, rengini primary (yeşil) yap
+                # Özel CSS kullandığımız için butona `type` parametresini vererek stilini yönetiyoruz.
+                button_type = "primary" if i == st.session_state.get('selected_recipe_index') else "secondary"
+                
+                if st.button(recipe_label, key=f"select_recipe_{i}", type=button_type, use_container_width=True):
+                    # Tıklanan tarifi seçili hale getir
+                    st.session_state['selected_recipe_index'] = i
+                    st.rerun() # Sayfayı yenile ve içeriği hemen göster
+
+        with view_col:
+            st.subheader("📝 Seçilen Tarif")
+            
+            # Seçili tarifi Session State'ten al
+            selected_index = st.session_state.get('selected_recipe_index')
+            
+            if selected_index is not None and 0 <= selected_index < len(st.session_state['saved_recipes']):
+                selected_recipe = st.session_state['saved_recipes'][selected_index]
+                
                 st.title(selected_recipe['title'])
                 st.markdown(f"**Kaynak:** *{selected_recipe['source']}*")
                 st.markdown("---")
                 
                 # Tarif içeriği
-                with st.container(border=True):
+                with st.container(border=True, height=500):
                     st.markdown(selected_recipe['content'])
                 
                 st.markdown("---")
@@ -628,10 +697,21 @@ elif selected_page == "📒 TARİFLERİM":
                 # Silme butonu
                 if st.button(f"🗑️ '{selected_recipe['title']}' Tarifini Sil", key="delete_recipe_btn", type="primary"):
                     # Silme işlemi
-                    del st.session_state['saved_recipes'][selected_recipe_index]
+                    del st.session_state['saved_recipes'][selected_index]
+                    
+                    # Seçim indeksini güncelle
+                    if len(st.session_state['saved_recipes']) > 0:
+                        # Eğer silinen son tarif değilse, bir öncekini seç
+                        new_index = max(0, selected_index - 1)
+                        st.session_state['selected_recipe_index'] = new_index
+                    else:
+                        st.session_state['selected_recipe_index'] = None
+                        
                     st.success(f"'{selected_recipe['title']}' tarifi başarıyla silindi.")
-                    # Listeyi yenilemek için uygulamayı yeniden çalıştır
-                    st.rerun() 
+                    st.rerun()
+            else:
+                 st.info("Lütfen soldaki listeden bir tarif seçin.")
+
 
 # --- 6. Malzeme İkamesi Alanı ---
 elif selected_page == "🔄 MALZEME İKAMESİ":
