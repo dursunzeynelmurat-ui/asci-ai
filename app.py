@@ -170,7 +170,7 @@ def parse_fridge_suggestions(markdown_text):
 
 st.set_page_config(page_title="Akıllı Mutfak Asistanı", layout="wide")
 
-# Özel CSS ile arayüzü güzelleştirme
+# Özel CSS ile arayüzü güzelleştirme (Sidebar kaldırıldığı için CSS güncellendi)
 st.markdown("""
     <style>
     .stApp {
@@ -180,32 +180,20 @@ st.markdown("""
     h1, h2, h3 {
         color: #10b981; /* Zümrüt Yeşili */
     }
-    .results-container {
-        padding: 16px;
-        border-radius: 8px;
-        background-color: #ffffff;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
-        min-height: 400px; 
-    }
-    /* Sidebar'ı biraz daha belirgin hale getirme */
-    .css-1d391kg { /* sidebar container class */
-        background-color: #e0f2f1; /* Açık Zümrüt Yeşili */
-        border-right: 1px solid #10b981;
-    }
     /* Streamlit butonlarının varsayılan stilini değiştirerek menü butonu gibi görünmesini sağlıyoruz */
-    .sidebar .stButton>button[type="button"] {
+    .stButton>button[type="button"] {
         white-space: normal;
-        text-align: left;
+        text-align: center;
         height: auto;
-        padding: 10px;
-        margin-bottom: 5px;
+        padding: 10px 5px; /* Yatay düğmeler için daha kompakt */
+        margin: 2px;
         border-radius: 6px;
-        border: 1px solid rgba(0,0,0,0.1); /* Hafif bir çerçeve */
         transition: background-color 0.2s, box-shadow 0.2s;
-        box-shadow: none;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid rgba(0,0,0,0.1); 
     }
     /* Seçili menü butonu (primary tipinde) */
-    .sidebar .stButton>button[type="button"][kind="primary"] {
+    .stButton>button[type="button"][kind="primary"] {
         background-color: #10b981;
         color: white;
         font-weight: bold;
@@ -213,21 +201,23 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(16, 185, 129, 0.4);
     }
     /* Diğer menü butonları (secondary tipinde) */
-    .sidebar .stButton>button[type="button"][kind="secondary"] {
+    .stButton>button[type="button"][kind="secondary"] {
         background-color: #ffffff;
         color: #333333;
     }
     /* Hover efekti */
-    .sidebar .stButton>button[type="button"]:hover:not([kind="primary"]) {
+    .stButton>button[type="button"]:hover:not([kind="primary"]) {
         background-color: #d1fae5; /* Çok açık yeşil */
+    }
+    /* Navigasyon barını küçültmek için */
+    .stHorizontalBlock {
+        gap: 0.5rem; /* Butonlar arası boşluk */
     }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("👨‍🍳 Akıllı Mutfak Asistanınız")
-st.markdown("""
-    Yapay zekanın gücüyle mutfağınızı dönüştürün! Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır, elinizdeki malzemelerle yaratıcı yemekler önerir, ölçü birimi çevirileri yapar, porsiyonları ayarlar ve tariflerinizi kaydeder!
-""")
+
 
 # ==============================================================================
 # API Anahtarı Yönetimi - Sadece secrets.toml'dan oku
@@ -244,45 +234,10 @@ if not api_key:
     st.warning("Lütfen Gemini API anahtarınızı `.streamlit/secrets.toml` dosyanıza `GEMINI_API_KEY` adıyla ekleyin.")
 # ==============================================================================
 
-# --- Oturum Durumu (Session State) Başlatma ---
-# Kaydedilen tarifler için oturum durumu listesi
-if 'saved_recipes' not in st.session_state:
-    st.session_state['saved_recipes'] = []
-
-# Dolap şefi için son öneri çıktısı
-if 'last_fridge_output' not in st.session_state:
-    st.session_state['last_fridge_output'] = ""
-
-# Dolap şefi için tam tarif çıktısı
-if 'generated_full_recipe' not in st.session_state:
-    st.session_state['generated_full_recipe'] = None # {'title': '', 'content': ''}
-
-# Kayıtlı tariflerden hangisinin seçili olduğunu tutar
-if 'selected_recipe_index' not in st.session_state:
-    st.session_state['selected_recipe_index'] = None
-    
-# Anlık tarif arama çıktısı
-if 'last_search_recipe_output' not in st.session_state:
-    st.session_state['last_search_recipe_output'] = ""
-    
-# Tarif dedektörü çıktısı
-if 'last_recipe_output' not in st.session_state:
-    st.session_state['last_recipe_output'] = ""
-
-# Sayfa seçimi için oturum durumu
-if 'current_page' not in st.session_state:
-    st.session_state['current_page'] = "🍽️ Tarif DEDEKTÖRÜ"
-
-# *** YENİ: Tarif içeriğini porsiyon ayarlayıcıya aktarmak için geçici anahtar ***
-if 'recipe_transfer_content' not in st.session_state:
-    st.session_state['recipe_transfer_content'] = None
-
-
-# --- Yan Panel (Sidebar) Navigasyonu ---
-st.sidebar.title("🛠️ Mutfak Araçları")
-
-# Sayfa seçenekleri (Buton Etiketleri)
+# --- Sayfa ve Oturum Durumu Yönetimi ---
+# Yeni sayfa listesi (ANA SAYFA eklendi)
 PAGES = {
+    "🏠 ANA SAYFA": "Başlangıç ve Genel Bakış",
     "🍽️ Tarif DEDEKTÖRÜ": "Yemek Fotoğrafından Tarifi Çözümle",
     "🔎 TARİF ARAMA": "Yemek Adına Göre Anlık Tarif Bul", 
     "🧊 DOLAP ŞEFİ": "Malzeme Fotoğrafından Yemek Önerileri",
@@ -295,17 +250,48 @@ PAGES = {
     "📝 ALIŞVERİŞ LİSTESİ": "Listeyi Birleştir ve Reyonlara Ayır",
 }
 
-# Yan panelde butonları listeleyerek menü oluşturma
-for page_key, page_description in PAGES.items():
-    # Mevcut sayfa seçiliyse butonu "primary" (yeşil) yap, değilse "secondary" (beyaz)
-    button_type = "primary" if page_key == st.session_state['current_page'] else "secondary"
-    
-    if st.sidebar.button(f"{page_key} - {page_description}", key=f"nav_{page_key}", type=button_type, use_container_width=True):
-        st.session_state['current_page'] = page_key
-        st.rerun() # Sayfa değişimini zorla
+# Oturum Durumu Başlatma/Kontrol
+if 'saved_recipes' not in st.session_state: st.session_state['saved_recipes'] = []
+if 'last_fridge_output' not in st.session_state: st.session_state['last_fridge_output'] = ""
+if 'generated_full_recipe' not in st.session_state: st.session_state['generated_full_recipe'] = None
+if 'selected_recipe_index' not in st.session_state: st.session_state['selected_recipe_index'] = None
+if 'last_search_recipe_output' not in st.session_state: st.session_state['last_search_recipe_output'] = ""
+if 'last_recipe_output' not in st.session_state: st.session_state['last_recipe_output'] = ""
+if 'recipe_transfer_content' not in st.session_state: st.session_state['recipe_transfer_content'] = None
+if 'current_page' not in st.session_state:
+    st.session_state['current_page'] = "🏠 ANA SAYFA" # Varsayılan olarak ANA SAYFA
 
-st.sidebar.markdown("---")
-st.sidebar.info("Yan paneldeki menüyü kullanarak araçlar arasında hızla geçiş yapabilirsiniz.")
+# --- Horizontal Navigasyon Barı ---
+
+st.markdown("### 🚀 Hızlı Erişim Araçları")
+
+# Butonların listesi
+page_keys = list(PAGES.keys())
+
+# Navigasyonu bir Streamlit konteynerine alıyoruz
+with st.container():
+    # İlk sıra (6 araç)
+    cols1 = st.columns(6)
+    for i, key in enumerate(page_keys[:6]):
+        with cols1[i]:
+            # Eğer bu sayfa seçiliyse butonu "primary" yap, değilse "secondary"
+            button_type = "primary" if key == st.session_state['current_page'] else "secondary"
+            if st.button(key, key=f"nav_top_{key}", type=button_type, use_container_width=True, help=PAGES[key]):
+                st.session_state['current_page'] = key
+                st.rerun()
+
+    # İkinci sıra (kalan 5 araç)
+    # Kalan 5 butonu 6 kolonluk bir alana yaymak için ilk kolonu boş bırakabiliriz
+    cols2 = st.columns(6) 
+    # İlk kolonu boş bırak (i=0)
+    for i, key in enumerate(page_keys[6:]):
+        with cols2[i + 1]: # cols2[0] boş, butonlar cols2[1] den başlar
+            button_type = "primary" if key == st.session_state['current_page'] else "secondary"
+            if st.button(key, key=f"nav_top_{key}", type=button_type, use_container_width=True, help=PAGES[key]):
+                st.session_state['current_page'] = key
+                st.rerun()
+
+st.markdown("---") # Ayırıcı
 
 # Seçili sayfayı al
 selected_page = st.session_state['current_page']
@@ -313,8 +299,40 @@ selected_page = st.session_state['current_page']
 
 # --- Ana İçerik Alanı (Koşullu Renderlama) ---
 
+# --- 0. Ana Sayfa Alanı (YENİ) ---
+if selected_page == "🏠 ANA SAYFA":
+    st.header("🏠 Akıllı Mutfak Asistanına Hoş Geldiniz")
+    st.markdown(f"**{PAGES['🏠 ANA SAYFA']}**")
+    
+    st.markdown("""
+        <div style="padding: 20px; border-left: 6px solid #10b981; background-color: #e0f2f1; border-radius: 8px; margin-bottom: 20px;">
+            **Yapay zekanın gücüyle mutfağınızı dönüştürün!** Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır, elinizdeki malzemelerle yaratıcı yemekler önerir, ölçü birimi çevirileri yapar, porsiyonları ayarlar ve tariflerinizi tek bir yerde yönetmenize olanak tanır.
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.image("https://placehold.co/800x250/10b981/ffffff?text=Akıllı+Mutfak+Asistanı+Görseli", caption="Hemen mutfağa girmeye hazır mısınız?", use_column_width=True)
+
+    st.subheader("💡 Mutfak Araçları ve Kullanım Alanları")
+    
+    st.markdown("Üstteki düğmeleri kullanarak aşağıdaki araçlara anında geçiş yapabilirsiniz:")
+    
+    tool_list = [
+        ("🍽️ Tarif DEDEKTÖRÜ", "Bir tabak yemeğin fotoğrafını yükleyerek tarifi, malzemeleri ve besin değerlerini hızlıca çözümleyin."),
+        ("🧊 DOLAP ŞEFİ", "Buzdolabınızdaki veya elinizdeki malzemelerin fotoğrafını çekin, AI size 3 yaratıcı yemek önerisi ve eksik malzeme listesi sunsun."),
+        ("🔎 TARİF ARAMA", "Web'de arama yaparak istediğiniz yemeğin en popüler ve güncel tarifini bulun ve kaydedin."),
+        ("± PORSİYON AYARLAYICI", "Tarif metnini yapıştırın ve istediğiniz porsiyon sayısına göre tüm malzeme oranlarını anında güncelleyin."),
+        ("📒 TARİFLERİM", "Kaydettiğiniz tüm tariflere tek bir merkezden kolayca erişin, inceleyin ve yönetin."),
+    ]
+    
+    for icon, description in tool_list:
+        st.markdown(f"**{icon}:** {description}")
+
+    st.markdown("---")
+    st.info("Bu uygulama, Streamlit'in kısıtlamaları nedeniyle tarifleri yalnızca **mevcut tarayıcı oturumunuz süresince** saklar. Yeni bir oturum açtığınızda kayıtlı tarifleriniz kaybolacaktır.")
+
+
 # --- 1. Tarif Keşfetme Alanı (Fotoğraf) ---
-if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
+elif selected_page == "🍽️ Tarif DEDEKTÖRÜ":
     st.header(PAGES[selected_page])
     st.markdown("Bir tabak yemeğin veya hazırladığınız yemeğin fotoğrafını yükleyin, Yapay Zeka anında tarifi, besin değerlerini ve alışveriş listenizi çıkarsın!")
     
@@ -866,7 +884,7 @@ elif selected_page == "📒 TARİFLERİM":
                 btn_col1, btn_col2 = st.columns(2)
                 
                 with btn_col1:
-                    # *** YENİ BUTON: Porsiyon Ayarlayıcıya Gönder ***
+                    # Porsiyon Ayarlayıcıya Gönder
                     if st.button(f"🚀 Porsiyon Ayarlayıcıya Gönder", key="transfer_recipe_btn", use_container_width=True, help="Bu tarifi porsiyon ayarlama aracına aktarır."):
                         st.session_state['recipe_transfer_content'] = selected_recipe['content'] # İçeriği transfer anahtarına kaydet
                         st.session_state['current_page'] = "± PORSİYON AYARLAYICI" # Hedef sayfayı ayarla
