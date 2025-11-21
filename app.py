@@ -39,7 +39,7 @@ def call_gemini_api(contents, system_instruction, api_key):
     """
     if not api_key:
         # API anahtarı secrets'tan alınamazsa bu hatayı fırlatır
-        raise ValueError("API Anahtarı bulunamadı. Lütfen `GEMINI_API_KEY` değerini `secrets.toml` dosyanızda kontrol edin.")
+        raise ValueError("API Anahtarı bulunamadı. Lütfen `secrets.toml` dosyanızda anahtarınızın doğru tanımlandığından emin olun.")
 
     payload = {
         "contents": contents,
@@ -130,14 +130,22 @@ st.title("🍲 Akıllı Mutfak Asistanı")
 st.markdown("Yapay Zeka ile Yemek Tarifleri Keşfedin ve Dolabınızı Yönetin.")
 
 # ==============================================================================
-# DEĞİŞİKLİK BURADA: API ANAHTARINI SECRETS'TEN ALMA
+# GÜNCELLENEN KISIM: API ANAHTARINI SECRETS'TEN ALMA VE ESNEK KONTROL
 # ==============================================================================
+
+# 1. Önerilen basit adı (GEMINI_API_KEY) kontrol et.
 api_key = st.secrets.get("GEMINI_API_KEY")
+
+# 2. Eğer basit isimde yoksa, kullanıcının verdiği yapıya (api_keys.gemini) bak.
+if not api_key:
+    # st.secrets.get("api_keys") bir dictionary döndürür.
+    api_key = st.secrets.get("api_keys", {}).get("gemini")
+
 
 # Anahtarın durumunu kontrol et ve kullanıcıya bildir
 if not api_key:
     st.error("🔑 API Anahtarı Eksik")
-    st.warning("Lütfen Gemini API anahtarınızı `GEMINI_API_KEY` adı altında `.streamlit/secrets.toml` dosyasına ekleyin.")
+    st.warning("Lütfen Gemini API anahtarınızı `.streamlit/secrets.toml` dosyasına ekleyin. Anahtarın adı **GEMINI_API_KEY** olmalı veya sizin kullandığınız gibi **[api_keys]** altında **gemini** adıyla tanımlanmış olmalıdır.")
 # ==============================================================================
 
 
@@ -154,15 +162,14 @@ with tab_recipe:
     with col1:
         uploaded_file = st.file_uploader("📸 Yemeğin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="recipe_upload")
         
-        # BUTON KONTROLÜ İÇİN YENİ MANTIK
-        # Buton, ancak hem API key hem de resim yüklendiğinde etkin olur.
+        # BUTON KONTROLÜ İÇİN MANTIK: API key VE resim yüklendiğinde etkin olur.
         is_recipe_ready = bool(api_key and uploaded_file) 
 
         if uploaded_file is not None:
             st.image(uploaded_file, caption='Yemek Önizleme', use_column_width=True)
             
         # Eğer hazır değilse, neden hazır olmadığını belirten bir mesaj göster
-        if not is_recipe_ready and api_key: # Sadece resim eksikse uyar
+        if not is_recipe_ready and api_key: # Sadece resim eksikse uyar (API key var)
             if uploaded_file is None:
                 st.warning("Butonu etkinleştirmek için lütfen bir resim yükleyin.")
 
@@ -212,14 +219,14 @@ with tab_fridge:
     with col3:
         uploaded_file_fridge = st.file_uploader("🛒 Malzemelerin Fotoğrafını Yükle/Çek", type=['png', 'jpg', 'jpeg'], key="fridge_upload")
         
-        # BUTON KONTROLÜ İÇİN YENİ MANTIK
+        # BUTON KONTROLÜ İÇİN MANTIK: API key VE resim yüklendiğinde etkin olur.
         is_fridge_ready = bool(api_key and uploaded_file_fridge)
         
         if uploaded_file_fridge is not None:
             st.image(uploaded_file_fridge, caption='Malzeme Önizleme', use_column_width=True)
 
         # Eğer hazır değilse, neden hazır olmadığını belirten bir mesaj göster
-        if not is_fridge_ready and api_key: # Sadece resim eksikse uyar
+        if not is_fridge_ready and api_key: # Sadece resim eksikse uyar (API key var)
             if uploaded_file_fridge is None:
                 st.warning("Butonu etkinleştirmek için lütfen bir resim yükleyiniz.")
 
