@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import base64
 import json
+import re
 
 # --- API Sabitleri ve Yapılandırma ---
 # Gemini API URL'si
@@ -55,8 +56,9 @@ def call_gemini_api(parts_list, system_instruction, api_key):
     # API Anahtarını doğrudan URL'ye ekliyoruz
     full_url = f"{GEMINI_API_URL}?key={api_key}"
     
+    # API'ye istek gönderme ve hata yönetimi
+    # Exponential backoff mekanizması olmadan basit bir istek gönderme
     try:
-        # İsteği gönder
         response = requests.post(full_url, headers=headers, data=json.dumps(payload))
         response.raise_for_status() # 4xx veya 5xx hatalarını HTTPError olarak fırlatır
 
@@ -64,7 +66,8 @@ def call_gemini_api(parts_list, system_instruction, api_key):
         result = response.json()
         
         # Metin içeriğini çıkar
-        text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text')
+        candidate = result.get('candidates', [None])[0]
+        text = candidate.get('content', {}).get('parts', [{}])[0].get('text') if candidate else None
 
         if not text:
             # Geçerli metin yanıtı yoksa hata mesajını kontrol et
@@ -94,6 +97,60 @@ def call_gemini_api(parts_list, system_instruction, api_key):
     except Exception as e:
         st.error(f"❌ Beklenmedik bir hata oluştu: {e}")
         return None
+
+def generate_full_recipe(idea_name, ingredient_list, api_key):
+    """Dolap Şefi'nden gelen bir fikre dayanarak tam bir tarif oluşturur."""
+    st.subheader(f"'{idea_name}' İçin Tam Tarif Oluşturuluyor...")
+    
+    system_prompt_full = "Sen uzman bir şefsin. Görevin, verilen yemek fikri ve malzeme listesine dayanarak, mantıklı bir porsiyon sayısıyla (örneğin 4 kişilik) TAM ve detaylı bir tarif (malzemeler ve yapılış aşamaları) hazırlamaktır. Tüm çıktı TAMAMEN Türkçe ve iyi formatlanmış Markdown başlıkları ve listeleri kullanmalıdır."
+    
+    user_query_full = f"Aşağıdaki yemek fikri için, belirtilen mevcut malzemeleri de kullanarak, eksik malzemeleri tamamlayarak 4 kişilik tam bir tarif oluştur. Fikir adı: '{idea_name}'. Mevcut malzemeler: {ingredient_list}. Yeni tarif porsiyon sayısıyla başlamalı ve tam malzeme listesini, ardından detaylı yapılış aşamalarını içermelidir."
+    
+    parts_list_full = [
+        {"text": user_query_full}
+    ]
+
+    result_text_full = call_gemini_api(parts_list_full, system_prompt_full, api_key)
+    return result_text_full
+
+def parse_fridge_suggestions(markdown_text):
+    """
+    Dolap Şefi'nin Markdown çıktısını 3 ayrı fikre böler.
+    Her fikri {'title': ..., 'content': ...} olarak döndürür.
+    Markdown çıktısının Yemek Fikri 1, Yemek Fikri 2, Yemek Fikri 3 başlıklarını kullandığını varsayar.
+    """
+    if not markdown_text:
+        return []
+    
+    # Genişletilmiş regex: Başlık ve bir sonraki başlık veya metin sonu arasındaki her şeyi yakalar
+    # Başlıklar genelde ## veya ### ile başlar
+    suggestions = re.split(r'^(#+\s*Yemek Fikri\s*\d+):', markdown_text, flags=re.MULTILINE)
+    
+    # İlk eleman (bazen boş veya giriş metni) atılır
+    suggestions.pop(0)
+
+    parsed_list = []
+    
+    for i in range(0, len(suggestions), 2):
+        # Başlık formatı: "# Yemek Fikri 1"
+        raw_title = suggestions[i].strip()
+        
+        # İçerik: Bir sonraki eleman
+        content = suggestions[i+1].strip()
+        
+        # Sadece yemek fikrinin adını çıkarmaya çalışalım (örn: "Kremalı Mantarlı Makarna" gibi)
+        # Basitlik için, başlığı kullanıyoruz.
+        parsed_list.append({
+            'title': raw_title.replace('#', '').strip(), # Başlık işaretlerini kaldır
+            'content': content
+        })
+
+    # Eğer ayrıştırma başarısız olursa, tüm metni tek bir sonuç olarak döndür
+    if not parsed_list and markdown_text:
+        return [{'title': "Dolap Şefi Analizi", 'content': markdown_text}]
+
+    return parsed_list
+
 
 # --- Streamlit Uygulama Arayüzü ---
 
@@ -149,16 +206,24 @@ if not api_key:
 if 'saved_recipes' not in st.session_state:
     st.session_state['saved_recipes'] = []
 
+# Dolap şefi için son öneri çıktısı
+if 'last_fridge_output' not in st.session_state:
+    st.session_state['last_fridge_output'] = ""
+
+# Dolap şefi için tam tarif çıktısı
+if 'generated_full_recipe' not in st.session_state:
+    st.session_state['generated_full_recipe'] = None # {'title': '', 'content': ''}
+
 # --- Yan Panel (Sidebar) Navigasyonu ---
 st.sidebar.title("🛠️ Mutfak Araçları")
 
-# Sayfa seçenekleri (Yeni özellik eklendi)
+# Sayfa seçenekleri 
 PAGES = {
     "🍽️ Tarif DEDEKTÖRÜ": "Yemek Fotoğrafından Tarifi Çözümle",
     "🧊 DOLAP ŞEFİ": "Malzeme Fotoğrafından Yemek Önerileri",
     "♻️ TARİF UYARLAMA": "Tarif Uyarlama ve Değiştirme",
     "± PORSİYON AYARLAYICI": "Tarif Porsiyonunu Otomatik Hesapla",
-    "📒 TARİFLERİM": "Kayıtlı Tarifleriniz", # Yeni Özellik
+    "📒 TARİFLERİM": "Kayıtlı Tarifleriniz", 
     "🔄 MALZEME İKAMESİ": "Malzeme İkamesi Bulucu",
     "⚖️ ÖLÇÜ ÇEVİRİCİ": "Malzemeye Özel Ölçü Çevirici (Hacim 🔄 Ağırlık)"
 }
@@ -273,13 +338,14 @@ elif selected_page == "🧊 DOLAP ŞEFİ":
 
         if st.button("✨ Yemek Önerileri Oluştur", key="generate_suggestions_btn", disabled=not is_fridge_ready, use_container_width=True):
             if is_fridge_ready:
+                st.session_state['generated_full_recipe'] = None # Yeni öneri geldiğinde tam tarifi sıfırla
                 with st.spinner('Malzemeler analiz ediliyor ve öneriler oluşturuluyor...'):
                     try:
                         image_part_fridge, mime_type_fridge = file_to_generative_part(uploaded_file_fridge)
                         
-                        system_prompt_fridge = "Sen yaratıcı bir mutfak şefisin. Görevin, resimdeki malzemeleri en verimli şekilde kullanarak hazırlanabilecek 3 farklı yemek tarifi fikri sunmak. Tüm çıktı TAMAMEN Türkçe olmalıdır. Yanıtını iyi formatlanmış Markdown başlıkları, kalın metinler ve listeler kullanarak hazırla."
+                        system_prompt_fridge = "Sen yaratıcı bir mutfak şefisin. Görevin, resimdeki malzemeleri en verimli şekilde kullanarak hazırlanabilecek 3 farklı yemek tarifi fikri sunmak. Her fikri ayrı ayrı, net başlıklarla ve TAMAMEN Türkçe olarak sun. Yanıtını iyi formatlanmış Markdown başlıkları, kalın metinler ve listeler kullanarak hazırla."
                         
-                        user_query_fridge = f"Bu, buzdolabımdaki veya tezgahımdaki malzemelerin fotoğrafı. Lütfen bu malzemeleri kullanarak yapabileceğim 3 farklı yemek fikri sun. Her yemek için, yemeğin adını, hangi malzemelerin mevcut olduğunu ve tamamlamak için hangi eksik malzemelerin gerektiğini **Markdown** formatında listele."
+                        user_query_fridge = f"Bu, buzdolabımdaki veya tezgahımdaki malzemelerin fotoğrafı. Lütfen bu malzemeleri kullanarak yapabileceğim 3 farklı yemek fikri sun. Her yemek için, **Yemek Fikri 1/2/3** şeklinde başlık kullan. Bu başlığın altında yemeğin adını, hangi malzemelerin mevcut olduğunu ve tamamlamak için hangi eksik malzemelerin gerektiğini **Markdown** formatında listele. Sadece sonucu ver."
                         
                         parts_list_fridge = [
                             image_part_fridge,
@@ -292,7 +358,7 @@ elif selected_page == "🧊 DOLAP ŞEFİ":
                         with col4:
                             st.subheader("✅ Önerilen Yemekler ve Eksikler")
                             if result_text_fridge:
-                                st.markdown(result_text_fridge)
+                                st.markdown("Aşağıdaki önerilerden birini seçerek tam tarifi oluşturabilirsiniz:")
                             else:
                                 st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
                                 
@@ -303,12 +369,64 @@ elif selected_page == "🧊 DOLAP ŞEFİ":
     with col4:
         st.subheader("🧊 Öneri Sonucu")
         with st.container(border=True, height=500):
-            if 'last_fridge_output' in st.session_state and st.session_state.get('last_fridge_output') != "":
-                st.markdown(st.session_state['last_fridge_output'])
+            
+            if st.session_state.get('generated_full_recipe'):
+                # Tam tarif oluşturulduysa, onu göster ve kaydetme butonu ekle
+                full_recipe = st.session_state['generated_full_recipe']
+                st.subheader(f"✅ Tam Tarif: {full_recipe['title']}")
+                st.markdown(full_recipe['content'])
+                
+                st.markdown("---")
+                st.subheader("Tarifi Kaydet")
+                recipe_title_full = st.text_input("Tarif Başlığı (Kaydetmek için)", key="save_title_recipe_full_fridge", value=full_recipe['title'], placeholder="Örn: Kolay Mercimek Çorbası")
+                
+                if st.button("💾 Bu Tam Tarifi Kaydet", key="save_recipe_full_fridge_btn", disabled=not recipe_title_full):
+                    if recipe_title_full:
+                        st.session_state['saved_recipes'].append({
+                            'title': recipe_title_full,
+                            'content': full_recipe['content'],
+                            'source': 'Dolap Şefi (Tam Tarif)'
+                        })
+                        st.success(f"'{recipe_title_full}' tam tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
+                        # Kaydettikten sonra tam tarif gösterimini sıfırla
+                        st.session_state['generated_full_recipe'] = None
+                        st.rerun() # Sayfayı yenile ve sadece önerileri göster
+            
+            elif st.session_state.get('last_fridge_output'):
+                # Sadece öneri çıktıysa, önerileri parçala ve butonları göster
+                suggestions = parse_fridge_suggestions(st.session_state['last_fridge_output'])
+                
+                if suggestions:
+                    for i, suggestion in enumerate(suggestions):
+                        with st.expander(f"**{suggestion['title']}** Fikri İçeriği"):
+                            st.markdown(suggestion['content'])
+                            
+                            # Tam tarif oluşturma butonu
+                            if st.button(f"➡️ Tam Tarifi Oluştur", key=f"create_full_recipe_{i}", use_container_width=True):
+                                # Kullanıcının sadece tam tarifi oluşturmasını beklediğimiz için burası
+                                with st.spinner(f"'{suggestion['title']}' için tam tarif oluşturuluyor..."):
+                                    # Malzeme listesi için basit bir yer tutucu metin kullanıyoruz
+                                    ingredient_summary = f"({suggestion['content'].split('Mevcut Malzemeler:')[-1].split('Eksik Malzemeler:')[-1].strip().split('\n')[0].strip()})"
+                                    
+                                    full_recipe_content = generate_full_recipe(suggestion['title'], ingredient_summary, api_key)
+                                    
+                                    if full_recipe_content:
+                                        # Tam tarifi session state'e kaydet ve göster
+                                        st.session_state['generated_full_recipe'] = {
+                                            'title': suggestion['title'],
+                                            'content': full_recipe_content
+                                        }
+                                        st.rerun() # Tam tarifi göstermek için sayfayı yenile
+                                    else:
+                                        st.error("Tam tarif oluşturulamadı.")
+                else:
+                    st.error("Önerilen metin ayrıştırılamadı. Lütfen API çıktısını kontrol edin.")
+            
             else:
+                # İlk durum: Hiçbir şey yok
                 st.markdown("""
                     <p class="text-center text-gray-500 italic mt-8">
-                        Malzeme fotoğrafınız yüklendikten ve analiz edildikten sonra burada 3 adet yaratıcı yemek fikri ve eksik listesi görünecektir.
+                        Malzeme fotoğrafınız yüklendikten ve analiz edildikten sonra burada 3 adet yaratıcı yemek fikri ve eksik listesi görünecektir. Bir fikri seçerek tam tarife dönüştürebilirsiniz!
                         <br><br>
                         *Hemen Mutfağa!*
                     </p>
