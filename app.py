@@ -228,6 +228,7 @@ if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
                     </p>
                     """, unsafe_allow_html=True)
             else:
+                 # Sonuç varsa burada gösterilebilir (şu anlık sadece buton içinde gösteriliyor)
                  pass
 
 
@@ -384,7 +385,7 @@ elif selected_page == "🔄 MALZEME İKAMESİ":
             if is_substitute_ready:
                 with st.spinner('İkame alternatifleri aranıyor...'):
                     try:
-                        system_prompt_substitute = "Sen mutfak uzmanı bir ikame profesyonelisindir. Görevin, verilen malzeme için en uygun, pratik ve ölçüleri belirten ikame alternatiflerini TAMAMEN Türkçe olarak sunmaktır. Yanıtın, her ikame için neden uygun olduğunu, hangi durumlarda kullanıldığını ve en önemlisi **ikame oranını (Örn: 1:1, 1 yumurta yerine 1/4 fincan elma püresi)** açıkça belirtmelidir. Markdown tablolarını veya listelerini kullan."
+                        system_prompt_substitute = "Sen mutfak uzmanı bir ikame profesyelisin. Görevin, verilen malzeme için en uygun, pratik ve ölçüleri belirten ikame alternatiflerini TAMAMEN Türkçe olarak sunmaktır. Yanıtın, her ikame için neden uygun olduğunu, hangi durumlarda kullanıldığını ve en önemlisi **ikame oranını (Örn: 1:1, 1 yumurta yerine 1/4 fincan elma püresi)** açıkça belirtmelidir. Markdown tablolarını veya listelerini kullan."
                         
                         reason_text = f"'{context_reason}' amacı/sebebiyle" if context_reason else "genel olarak"
                         
@@ -415,10 +416,10 @@ elif selected_page == "🔄 MALZEME İKAMESİ":
                     """, unsafe_allow_html=True)
 
 
-# --- 5. Ölçü Çevirici Alanı (ÇİFT YÖNLÜ) ---
+# --- 5. Ölçü Çevirici Alanı (ÇİFT YÖNLÜ ve TR BAZLI) ---
 elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
     st.header(PAGES[selected_page])
-    st.markdown("Hacim (Bardak, ml) ve Ağırlık (Gram, kg) ölçülerini, seçtiğiniz malzemenin yoğunluğuna göre hassas bir şekilde çevirin.")
+    st.markdown("Hacim (Bardak, kaşık, ml, L) ve Ağırlık (Gram, kg) ölçülerini, seçtiğiniz malzemenin yoğunluğuna göre hassas bir şekilde çevirin. Çeviriler Türkiye mutfağı standartlarına uygundur.")
 
     col7, col8 = st.columns([1, 2])
 
@@ -431,8 +432,15 @@ elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
             horizontal=True
         )
 
-        # Hacim Birimleri ve Ağırlık Birimleri
-        VOLUME_UNITS = ['Bardak (Cup)', 'Yemek Kaşığı (Tbsp)', 'Çay Kaşığı (tsp)', 'Mililitre (ml)', 'Litre (L)']
+        # Hacim Birimleri ve Ağırlık Birimleri (Türkiye standartlarına uygun olarak güncellendi)
+        VOLUME_UNITS = [
+            'Bardak', 
+            'Yemek Kaşığı', 
+            'Tatlı Kaşığı', 
+            'Çay Kaşığı', 
+            'Mililitre (ml)', 
+            'Litre (L)'
+        ]
         WEIGHT_UNITS = ['Gram (g)', 'Kilogram (kg)', 'Ons (oz)', 'Pound (lb)']
 
         # Çeviri Yönüne göre birimlerin belirlenmesi
@@ -480,19 +488,27 @@ elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
 
         if st.button("⚖️ Hesapla ve Çevir", key="calculate_conversion_btn", disabled=not is_converter_ready, use_container_width=True):
             if is_converter_ready:
-                with st.spinner('Yoğunluğa özel çeviri hesaplanıyor...'):
+                with st.spinner('Yoğunluğa özel ve Türkiye mutfağı standartlarına göre çeviri hesaplanıyor...'):
                     try:
-                        system_prompt_converter = "Sen, mutfak ölçü birimleri ve gıda yoğunlukları konusunda uzman, titiz bir asistansın. Görevin, verilen miktarı, başlangıç birimini, malzemeyi ve hedef birimi dikkate alarak, TAMAMEN Türkçe olarak doğru çeviriyi ve bu çevirinin nedenini veya varsayımlarını (kullanılan yoğunluk değeri gibi) açıklamaktır. Yanıtın yalnızca sonuç ve kısa bir açıklama içermelidir. Sonucu kalın ve büyük yazılarla belirt."
+                        system_prompt_converter = (
+                            "Sen, mutfak ölçü birimleri ve gıda yoğunlukları konusunda uzman, titiz bir asistansın. "
+                            "Görevin, verilen miktarı, başlangıç birimini, malzemeyi ve hedef birimi dikkate alarak, "
+                            "özellikle **Türkiye mutfağında standart kabul edilen ölçüleri (örn: 1 yemek kaşığı yaklaşık 15 ml, 1 bardak yaklaşık 200 ml)** "
+                            "kullanarak doğru çeviriyi ve bu çevirinin nedenini veya varsayımlarını (kullanılan yoğunluk değeri gibi) açıklamaktır. "
+                            "Yanıtın yalnızca sonuç ve kısa bir açıklama içermelidir. Sonucu kalın ve büyük yazılarla belirt."
+                        )
                         
                         user_query_converter = (
                             f"Lütfen '{amount_input} {source_unit_select}' miktarındaki '{ingredient_input}' malzemesini, "
-                            f"'{target_unit_select}' birimine çevir ve sonucu nedenleriyle birlikte açıkla."
+                            f"'{target_unit_select}' birimine çevir. Çeviri yaparken lütfen Türkiye mutfak ölçütlerini (bardak, kaşık) referans al. "
+                            f"Sonucu ve nedenini (kullanılan yoğunluk) açıklayarak ver."
                         )
                         
                         parts_list_converter = [
                             {"text": user_query_converter}
                         ]
 
+                        # API Çağrısı
                         result_text_converter = call_gemini_api(parts_list_converter, system_prompt_converter, api_key)
                         st.session_state['last_converter_output'] = result_text_converter
                             
