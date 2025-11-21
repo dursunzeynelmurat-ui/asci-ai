@@ -130,7 +130,8 @@ st.markdown("""
     /* Dashboard Kartları için Buton Stili */
     .stButton button {
         border-radius: 12px;
-        height: 80px;
+        height: auto;
+        min-height: 50px;
         border: 1px solid #e2e8f0;
         background-color: white;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
@@ -147,12 +148,15 @@ st.markdown("""
         color: #10b981;
     }
     
-    /* Ana Menü Dönüş Butonu */
-    .home-button button {
-        background-color: #e2e8f0;
-        height: auto;
-        padding: 5px 15px;
-        font-size: 14px;
+    /* Form Gönder Butonları (Primary) */
+    div[data-testid="stForm"] button[kind="primary"] {
+        background-color: #10b981;
+        color: white;
+        border: none;
+    }
+    div[data-testid="stForm"] button[kind="primary"]:hover {
+        background-color: #059669;
+        color: white;
     }
 
     /* Chat Kutusu */
@@ -179,7 +183,7 @@ if 'saved_recipes' not in st.session_state: st.session_state['saved_recipes'] = 
 # --- API Anahtarı Kontrolü ---
 api_key = st.secrets.get("GEMINI_API_KEY") or st.secrets.get("api_keys", {}).get("gemini")
 
-# --- Ana Başlık Alanı (Her sayfada görünür ama içeriği değişir) ---
+# --- Ana Başlık Alanı ---
 col_logo, col_title = st.columns([1, 6])
 with col_logo:
     st.markdown("# 👨‍🍳")
@@ -188,14 +192,12 @@ with col_title:
         st.markdown("# Akıllı Mutfak Asistanı")
         st.markdown("*Yapay zeka destekli kişisel şefiniz ve mutfak yöneticiniz.*")
     else:
-        # Alt sayfalarda Ana Menüye Dön butonu
         c1, c2 = st.columns([1, 5])
         with c1:
             if st.button("🏠 Ana Menü", key="go_home_btn"):
                 st.session_state['current_page'] = "HOME"
                 st.rerun()
         with c2:
-            # Sayfa Başlığını dinamik yaz
             page_titles = {
                 "DETECTOR": "Fotoğraftan Tarif Çıkar",
                 "SEARCH": "Web'den Tarif Bul",
@@ -225,7 +227,6 @@ if not api_key:
 # ==============================================================================
 if st.session_state['current_page'] == "HOME":
     
-    # KATEGORİ 1: KEŞFET & BUL
     st.subheader("🔍 Keşfet & Bul")
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -235,9 +236,8 @@ if st.session_state['current_page'] == "HOME":
     with c3:
         if st.button("🧊 Dolap Şefi", use_container_width=True): st.session_state['current_page'] = "FRIDGE"; st.rerun()
 
-    st.markdown("###") # Boşluk
+    st.markdown("###") 
 
-    # KATEGORİ 2: ŞEFİN ASİSTANI (Yapay Zeka)
     st.subheader("🤖 Şefin Asistanı")
     c4, c5, c6, c7 = st.columns(4)
     with c4:
@@ -251,7 +251,6 @@ if st.session_state['current_page'] == "HOME":
 
     st.markdown("###") 
 
-    # KATEGORİ 3: HESAP & KİTAP (Araçlar)
     st.subheader("🧮 Hesap & Kitap")
     c8, c9, c10, c11, c12, c13 = st.columns(6)
     with c8:
@@ -269,7 +268,6 @@ if st.session_state['current_page'] == "HOME":
 
     st.markdown("###")
 
-    # KATEGORİ 4: KÜTÜPHANE
     st.subheader("📚 Kütüphane")
     if st.button("📒 Tarif Defterim", type="primary", use_container_width=True): st.session_state['current_page'] = "BOOK"; st.rerun()
 
@@ -277,21 +275,22 @@ if st.session_state['current_page'] == "HOME":
 # ALT SAYFALAR
 # ==============================================================================
 
-# Fonksiyon: Kayıt Bölümü
 def render_save(content, default_title, source):
     if content:
         st.markdown("---")
         with st.expander("💾 Kaydet", expanded=True):
-            c1, c2 = st.columns([3, 1])
-            title = c1.text_input("Kayıt Başlığı", value=default_title, key=f"t_{source}")
-            if c2.button("Kaydet", key=f"b_{source}", use_container_width=True):
-                if title:
-                    save_recipe_to_db(title, content, source)
-                    st.toast("Kayıt Başarılı!", icon="✅")
-                else:
-                    st.toast("Başlık giriniz", icon="⚠️")
+            with st.form(key=f"save_form_{source}"): # Kayıt için de form kullanıyoruz
+                c1, c2 = st.columns([3, 1])
+                title = c1.text_input("Kayıt Başlığı", value=default_title)
+                submitted = c2.form_submit_button("Kaydet", use_container_width=True)
+                if submitted:
+                    if title:
+                        save_recipe_to_db(title, content, source)
+                        st.toast("Kayıt Başarılı!", icon="✅")
+                    else:
+                        st.toast("Başlık giriniz", icon="⚠️")
 
-# 1. FOTOĞRAFTAN TARİF
+# 1. FOTOĞRAFTAN TARİF (Form kullanılmadı, dosya yükleme Enter ile tetiklenmez)
 if st.session_state['current_page'] == "DETECTOR":
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -306,12 +305,15 @@ if st.session_state['current_page'] == "DETECTOR":
             st.markdown(st.session_state['det_res'])
             render_save(st.session_state['det_res'], "Yeni Tarif", "Fotoğraf")
 
-# 2. TARİF ARAMA
+# 2. TARİF ARAMA (Form Eklendi - Enter çalışır)
 elif st.session_state['current_page'] == "SEARCH":
     c1, c2 = st.columns([1, 2])
     with c1:
-        q = st.text_input("Yemek Adı", placeholder="Örn: Karnıyarık")
-        if st.button("Bul", type="primary", use_container_width=True, disabled=not q):
+        with st.form(key='search_form'):
+            q = st.text_input("Yemek Adı", placeholder="Örn: Karnıyarık")
+            submit_search = st.form_submit_button("Bul", type="primary", use_container_width=True, disabled=not q)
+        
+        if submit_search:
             with st.spinner("Aranıyor..."):
                 res = call_gemini_api([{"text": f"'{q}' tarifi"}], "En iyi tarifi bul ve detaylı yaz.", api_key, True)
                 st.session_state['search_res'] = res
@@ -321,7 +323,7 @@ elif st.session_state['current_page'] == "SEARCH":
             st.markdown(st.session_state['search_res'])
             render_save(st.session_state['search_res'], st.session_state.get('search_q', 'Tarif'), "Arama")
 
-# 3. DOLAP ŞEFİ
+# 3. DOLAP ŞEFİ (Form kullanılmadı, dosya yükleme)
 elif st.session_state['current_page'] == "FRIDGE":
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -351,7 +353,7 @@ elif st.session_state['current_page'] == "FRIDGE":
                             st.session_state['fridge_full'] = {'title': name, 'content': full}
                             st.rerun()
 
-# 4. MUTFAK GURUSU
+# 4. MUTFAK GURUSU (Chat Input zaten Enter ile çalışır)
 elif st.session_state['current_page'] == "CHAT":
     for m in st.session_state['chat_messages']:
         with st.chat_message(m["role"]): st.markdown(m["content"])
@@ -366,17 +368,20 @@ elif st.session_state['current_page'] == "CHAT":
                 st.markdown(res)
                 st.session_state['chat_messages'].append({"role": "assistant", "content": res})
 
-# 5. BESİN ANALİZİ
+# 5. BESİN ANALİZİ (Form Eklendi)
 elif st.session_state['current_page'] == "NUTRITION":
     t_content = st.session_state.get('transfer_content', '')
-    if len(t_content) > 200: # Eğer transfer edilen metin uzunsa (muhtemelen tarif)
+    if len(t_content) > 200:
         default_txt = t_content
         st.info("Tarif aktarıldı.")
     else:
         default_txt = ""
-        
-    txt = st.text_area("Tarif Metni", value=default_txt, height=200)
-    if st.button("Analiz Et", type="primary", use_container_width=True):
+    
+    with st.form(key='nutri_form'):
+        txt = st.text_area("Tarif Metni (Ctrl+Enter ile gönder)", value=default_txt, height=200)
+        submit_nutri = st.form_submit_button("Analiz Et", type="primary", use_container_width=True)
+    
+    if submit_nutri:
         with st.spinner("Hesaplanıyor..."):
             res = call_gemini_api([{"text": f"Bu tarifin besin değerlerini (kalori, protein, yağ, karb) hesapla: {txt}"}], "Diyetisyensin.", api_key)
             st.session_state['nutri_res'] = res
@@ -386,12 +391,15 @@ elif st.session_state['current_page'] == "NUTRITION":
         st.markdown(st.session_state['nutri_res'])
         render_save(st.session_state['nutri_res'], "Besin Analizi", "Analizör")
 
-# 6. MENÜ PLANLAYICI
+# 6. MENÜ PLANLAYICI (Form Eklendi)
 elif st.session_state['current_page'] == "MENU":
-    c1, c2 = st.columns(2)
-    with c1: diet = st.selectbox("Diyet", ["Standart", "Vegan", "Ketojenik", "Glutensiz"])
-    with c2: goal = st.selectbox("Hedef", ["Sağlıklı Yaşam", "Kilo Verme", "Kas Yapma"])
-    if st.button("Plan Oluştur", type="primary", use_container_width=True):
+    with st.form(key='menu_form'):
+        c1, c2 = st.columns(2)
+        with c1: diet = st.selectbox("Diyet", ["Standart", "Vegan", "Ketojenik", "Glutensiz"])
+        with c2: goal = st.selectbox("Hedef", ["Sağlıklı Yaşam", "Kilo Verme", "Kas Yapma"])
+        submit_menu = st.form_submit_button("Plan Oluştur", type="primary", use_container_width=True)
+    
+    if submit_menu:
         with st.spinner("Planlanıyor..."):
             res = call_gemini_api([{"text": f"{diet} diyeti ve {goal} hedefi için 1 günlük örnek menü."}], "Diyetisyensin.", api_key)
             st.session_state['menu_res'] = res
@@ -399,53 +407,70 @@ elif st.session_state['current_page'] == "MENU":
         st.markdown(st.session_state['menu_res'])
         render_save(st.session_state['menu_res'], f"{diet} Menü", "Planlayıcı")
 
-# 7. LEZZET EŞLEŞTİRİCİ
+# 7. LEZZET EŞLEŞTİRİCİ (Form Eklendi - Enter çalışır)
 elif st.session_state['current_page'] == "PAIRING":
     t_name = st.session_state.get('transfer_content', '')
-    # Eğer transfer edilen metin kısaysa (muhtemelen isim)
     val = t_name if len(t_name) < 100 else ""
     
-    dish = st.text_input("Yemek Adı", value=val)
-    if st.button("Eşleşmeleri Bul", type="primary", use_container_width=True, disabled=not dish):
-        with st.spinner("Öneriliyor..."):
-            res = call_gemini_api([{"text": f"{dish} yanına ne gider? İçecek, yan yemek, meze öner."}], "Gurmesin.", api_key)
-            st.session_state['pair_res'] = res
-            if val: st.session_state['transfer_content'] = ""
-    if 'pair_res' in st.session_state:
-        st.markdown(st.session_state['pair_res'])
-        render_save(st.session_state['pair_res'], f"{dish} Eşleşmeleri", "Gurme")
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        with st.form(key='pair_form'):
+            dish = st.text_input("Yemek Adı", value=val, placeholder="Örn: Izgara Somon")
+            submit_pair = st.form_submit_button("Eşleşmeleri Bul", type="primary", use_container_width=True, disabled=not dish)
+        
+        if submit_pair:
+            with st.spinner("Öneriliyor..."):
+                res = call_gemini_api([{"text": f"{dish} yanına ne gider? İçecek, yan yemek, meze öner."}], "Gurmesin.", api_key)
+                st.session_state['pair_res'] = res
+                if val: st.session_state['transfer_content'] = ""
+    with c2:
+        if 'pair_res' in st.session_state:
+            st.markdown(st.session_state['pair_res'])
+            render_save(st.session_state['pair_res'], f"{dish} Eşleşmeleri", "Gurme")
 
-# 8. TARİF UYARLAMA
+# 8. TARİF UYARLAMA (Form Eklendi)
 elif st.session_state['current_page'] == "ADAPT":
     t_cont = st.session_state.get('transfer_content', '')
     val = t_cont if len(t_cont) > 100 else ""
     
-    txt = st.text_area("Orijinal Tarif", value=val, height=150)
-    req = st.text_input("İsteğiniz", placeholder="Örn: Glutensiz yap")
-    if st.button("Uyarla", type="primary", use_container_width=True, disabled=not (txt and req)):
-        with st.spinner("Uyarlanıyor..."):
-            res = call_gemini_api([{"text": f"Bu tarifi şuna göre düzenle: {req}\n\n{txt}"}], "Şefsin.", api_key)
-            st.session_state['adapt_res'] = res
-            if val: st.session_state['transfer_content'] = ""
-    if 'adapt_res' in st.session_state:
-        st.markdown(st.session_state['adapt_res'])
-        render_save(st.session_state['adapt_res'], "Uyarlanmış Tarif", "Uyarlama")
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        with st.form(key='adapt_form'):
+            txt = st.text_area("Orijinal Tarif", value=val, height=150)
+            req = st.text_input("İsteğiniz", placeholder="Örn: Glutensiz yap")
+            submit_adapt = st.form_submit_button("Uyarla", type="primary", use_container_width=True, disabled=not (txt and req))
+        
+        if submit_adapt:
+            with st.spinner("Uyarlanıyor..."):
+                res = call_gemini_api([{"text": f"Bu tarifi şuna göre düzenle: {req}\n\n{txt}"}], "Şefsin.", api_key)
+                st.session_state['adapt_res'] = res
+                if val: st.session_state['transfer_content'] = ""
+    with c2:
+        if 'adapt_res' in st.session_state:
+            st.markdown(st.session_state['adapt_res'])
+            render_save(st.session_state['adapt_res'], "Uyarlanmış Tarif", "Uyarlama")
 
-# 9. PORSİYON AYARLAYICI
+# 9. PORSİYON AYARLAYICI (Form Eklendi)
 elif st.session_state['current_page'] == "SCALE":
     t_cont = st.session_state.get('transfer_content', '')
     val = t_cont if len(t_cont) > 100 else ""
     
-    txt = st.text_area("Orijinal Tarif", value=val, height=150)
-    srv = st.number_input("Yeni Kişi Sayısı", value=4, min_value=1)
-    if st.button("Hesapla", type="primary", use_container_width=True, disabled=not txt):
-        with st.spinner("Hesaplanıyor..."):
-            res = call_gemini_api([{"text": f"Bu tarifi {srv} kişilik olacak şekilde güncelle:\n{txt}"}], "Matematikçi şefsin.", api_key)
-            st.session_state['scale_res'] = res
-            if val: st.session_state['transfer_content'] = ""
-    if 'scale_res' in st.session_state:
-        st.markdown(st.session_state['scale_res'])
-        render_save(st.session_state['scale_res'], f"Tarif ({srv} Kişilik)", "Porsiyon")
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        with st.form(key='scale_form'):
+            txt = st.text_area("Orijinal Tarif", value=val, height=150)
+            srv = st.number_input("Yeni Kişi Sayısı", value=4, min_value=1)
+            submit_scale = st.form_submit_button("Hesapla", type="primary", use_container_width=True, disabled=not txt)
+        
+        if submit_scale:
+            with st.spinner("Hesaplanıyor..."):
+                res = call_gemini_api([{"text": f"Bu tarifi {srv} kişilik olacak şekilde güncelle:\n{txt}"}], "Matematikçi şefsin.", api_key)
+                st.session_state['scale_res'] = res
+                if val: st.session_state['transfer_content'] = ""
+    with c2:
+        if 'scale_res' in st.session_state:
+            st.markdown(st.session_state['scale_res'])
+            render_save(st.session_state['scale_res'], f"Tarif ({srv} Kişilik)", "Porsiyon")
 
 # 10. TARİF DEFTERİM
 elif st.session_state['current_page'] == "BOOK":
@@ -485,35 +510,42 @@ elif st.session_state['current_page'] == "BOOK":
                     delete_recipe_from_db(r['id'])
                     st.rerun()
 
-# DİĞER ARAÇLAR (Basitleştirilmiş)
+# DİĞER ARAÇLAR (Form Eklendi - Enter çalışır)
 elif st.session_state['current_page'] in ["SUB", "CONV", "STORAGE", "LIST"]:
     cp = st.session_state['current_page']
     c1, c2 = st.columns([1, 1])
     with c1:
-        if cp == "SUB":
-            i = st.text_input("Malzeme")
-            if st.button("Bul", disabled=not i):
-                st.session_state['res_sub'] = call_gemini_api([{"text": f"{i} yerine ne kullanılır?"}], "Uzman.", api_key)
-        elif cp == "CONV":
-            i = st.text_input("Çeviri (Örn: 1 bardak un kaç gr)")
-            if st.button("Çevir", disabled=not i):
-                st.session_state['res_conv'] = call_gemini_api([{"text": f"{i} çevir. Türk ölçüleri."}], "Uzman.", api_key)
-        elif cp == "STORAGE":
-            i = st.text_input("Yemek")
-            if st.button("Sorgula", disabled=not i):
-                st.session_state['res_str'] = call_gemini_api([{"text": f"{i} nasıl saklanır? Süreler?"}], "Uzman.", api_key)
-        elif cp == "LIST":
-            i = st.text_area("Liste")
-            if st.button("Düzenle", disabled=not i):
-                st.session_state['res_lst'] = call_gemini_api([{"text": f"Bu listeyi reyonlara ayır: {i}"}], "Uzman.", api_key)
+        with st.form(key=f'form_{cp}'):
+            if cp == "SUB":
+                i = st.text_input("Malzeme", placeholder="Örn: Yumurta")
+                reason = st.text_input("Amaç (Opsiyonel)", placeholder="Vegan olması için")
+                btn_txt, prompt_tmpl = "İkame Bul", "Bunun yerine ne kullanabilirim: {inp}. Amaç: {reason}."
+            elif cp == "CONV":
+                i = st.text_input("Çeviri (Örn: 1 bardak un kaç gr)")
+                reason = ""
+                btn_txt, prompt_tmpl = "Çevir", "Mutfak ölçüsü çevirisi yap: {inp}. Türk standartlarını kullan."
+            elif cp == "STORAGE":
+                i = st.text_input("Yemek", placeholder="Örn: Pişmiş Tavuk")
+                reason = ""
+                btn_txt, prompt_tmpl = "Bilgi Al", "{inp} için güvenli saklama süreleri (dolap/buzluk) ve saklama koşulları nedir?"
+            elif cp == "LIST":
+                i = st.text_area("Liste (Ctrl+Enter)", height=150)
+                reason = ""
+                btn_txt, prompt_tmpl = "Düzenle", "Bu alışveriş listesini market reyonlarına göre kategorize et ve birleştir: {inp}"
+
+            submitted = st.form_submit_button(btn_txt, type="primary", disabled=not i)
+        
+        if submitted:
+            with st.spinner("İşleniyor..."):
+                final_prompt = prompt_tmpl.format(inp=inp, reason=reason)
+                res = call_gemini_api([{"text": final_prompt}], "Sen uzman bir mutfak asistanısın.", api_key)
+                st.session_state[f'res_{page}'] = res
     
     with c2:
-        k = f'res_{cp.lower()}' if cp != "LIST" else 'res_lst' # key mapping adjustment
-        # Basit mapping düzeltmesi:
-        if cp == "SUB": k = 'res_sub'
-        elif cp == "CONV": k = 'res_conv'
-        elif cp == "STORAGE": k = 'res_str'
+        # Session state key mapping
+        k = f'res_{cp}' # Doğrudan sayfa adını key olarak kullanalım (daha önceki karmaşıklığı önlemek için)
         
         if k in st.session_state and st.session_state[k]:
-            st.markdown(st.session_state[k])
-            render_save(st.session_state[k], "Bilgi Notu", cp)
+            with st.container(border=True): st.markdown(st.session_state[k])
+            def_title = "Alışveriş Listesi" if cp == "LIST" else (i if len(i)<20 else i[:20])
+            render_save(st.session_state[k], def_title, cp)
