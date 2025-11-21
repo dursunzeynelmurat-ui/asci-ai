@@ -57,7 +57,6 @@ def call_gemini_api(parts_list, system_instruction, api_key):
     full_url = f"{GEMINI_API_URL}?key={api_key}"
     
     # API'ye istek gönderme ve hata yönetimi
-    # Exponential backoff mekanizması olmadan basit bir istek gönderme
     try:
         response = requests.post(full_url, headers=headers, data=json.dumps(payload))
         response.raise_for_status() # 4xx veya 5xx hatalarını HTTPError olarak fırlatır
@@ -72,9 +71,12 @@ def call_gemini_api(parts_list, system_instruction, api_key):
         if not text:
             # Geçerli metin yanıtı yoksa hata mesajını kontrol et
             error_message = result.get('error', {}).get('message', 'Bilinmeyen bir API yanıt hatası.')
-            # Buradaki hata kontrolünü basitleştiriyoruz, kullanıcıya gösterdiğimizden emin olalım
             if response.status_code != 200:
                 raise Exception(f"API Yanıt Kodu {response.status_code}. Detaylar: {response.text}")
+            
+            # Eğer yanıt boşsa ve durum kodu 200 ise, modelin boş döndürdüğünü varsayalım
+            if not text and response.status_code == 200:
+                return ""
             
             raise Exception(f"API'den geçerli metin yanıtı alınamadı. Hata: {error_message}")
         
@@ -101,6 +103,31 @@ def call_gemini_api(parts_list, system_instruction, api_key):
     except Exception as e:
         st.error(f"❌ Beklenmedik bir hata oluştu: {e}")
         return None
+    
+def get_suggestions_from_gemini(partial_query, api_key):
+    """Kullanıcının kısmi girdisine göre yemek/gıda önerileri alır."""
+    if not api_key or not partial_query:
+        return []
+    
+    system_prompt_suggestions = (
+        "Sen bir mutfak ve gıda veri tabanısın. Görevin, verilen kısmi gıda adını tamamlayabilecek en popüler ve alakalı 5 tam gıda adını/yemeği listelemektir. "
+        "Yanıtını sadece virgülle ayrılmış bir liste olarak, başka hiçbir açıklama veya Markdown formatı olmadan ver. Örneğin: 'Kremalı Mantarlı Makarna, Fırında Tavuk Sote, Mercimek Çorbası, Tavuklu Pilav, Yoğurtlu Semizotu'."
+    )
+    
+    user_query_suggestions = f"Lütfen '{partial_query}' ile başlayan veya alakalı olan 5 popüler yemek/gıda önerisi listele. Yalnızca virgülle ayrılmış isimler kullan."
+    
+    parts_list_suggestions = [
+        {"text": user_query_suggestions}
+    ]
+
+    result_text = call_gemini_api(parts_list_suggestions, system_prompt_suggestions, api_key)
+    
+    if result_text:
+        # Virgülle ayrılmış metni listeye çevir ve temizle
+        suggestions_list = [s.strip() for s in result_text.split(',') if s.strip()]
+        # Sadece ilk 5 öneriyi döndür
+        return suggestions_list[:5]
+    return []
 
 def generate_full_recipe(idea_name, ingredient_list, api_key):
     """Dolap Şefi'nden gelen bir fikre dayanarak tam bir tarif oluşturur."""
@@ -254,6 +281,17 @@ if 'selected_recipe_index' not in st.session_state:
 # Sayfa seçimi için oturum durumu
 if 'current_page' not in st.session_state:
     st.session_state['current_page'] = "🍽️ Tarif DEDEKTÖRÜ"
+
+# Öneri listeleri için oturum durumu
+if 'storage_suggestions' not in st.session_state:
+    st.session_state['storage_suggestions'] = []
+    
+if 'substitute_suggestions' not in st.session_state:
+    st.session_state['substitute_suggestions'] = []
+
+# YENİ: Ölçü çevirici önerileri
+if 'converter_suggestions' not in st.session_state:
+    st.session_state['converter_suggestions'] = []
 
 
 # --- Yan Panel (Sidebar) Navigasyonu ---
@@ -699,8 +737,6 @@ elif selected_page == "📒 TARİFLERİM":
                 with st.container(border=True, height=500):
                     st.markdown(selected_recipe['content'])
                 
-                st.markdown("---")
-                
                 # Silme butonu
                 if st.button(f"🗑️ '{selected_recipe['title']}' Tarifini Sil", key="delete_recipe_btn", type="primary"):
                     # Silme işlemi
@@ -728,12 +764,38 @@ elif selected_page == "🔄 MALZEME İKAMESİ":
     col5, col6 = st.columns([1, 2])
 
     with col5:
-        ingredient_to_substitute = st.text_input(
-            "Hangi Malzemeyi İkame Etmek İstiyorsunuz?", 
-            key="substitute_ingredient_input",
-            placeholder="Örn: Yumurta, Süt, Buğday Unu, Tereyağı"
-        )
+        # Öneri butonu için container
+        input_container = st.container()
         
+        with input_container:
+            # Girdi Alanı
+            ingredient_to_substitute = st.text_input(
+                "Hangi Malzemeyi İkame Etmek İstiyorsunuz?", 
+                key="substitute_ingredient_input",
+                placeholder="Örn: Yumurta, Süt, Buğday Unu, Tereyağı"
+            )
+            
+            # Öneri Butonu
+            if st.button("💡 Öneri Al", key="get_sub_suggestions_btn", disabled=not (api_key and ingredient_to_substitute)):
+                with st.spinner("Öneriler aranıyor..."):
+                    st.session_state['substitute_suggestions'] = get_suggestions_from_gemini(
+                        ingredient_to_substitute, 
+                        api_key
+                    )
+            
+            # Öneri Listesi ve Seçim
+            if st.session_state.get('substitute_suggestions'):
+                selected_suggestion = st.radio(
+                    "Önerilen Malzemelerden Birini Seçin:", 
+                    st.session_state['substitute_suggestions'],
+                    key="select_substitute_suggestion"
+                )
+                if selected_suggestion:
+                    # Seçilen öneriyi text_input'a geri yaz ve state'i sıfırla
+                    st.session_state["substitute_ingredient_input"] = selected_suggestion
+                    st.session_state['substitute_suggestions'] = [] # Seçim yapıldı, listeyi gizle
+                    st.rerun()
+                    
         context_reason = st.text_input(
             "İkame Nedeni/Kullanım Amacı (Zorunlu Değil)", 
             key="substitute_reason_input",
@@ -781,6 +843,22 @@ elif selected_page == "🔄 MALZEME İKAMESİ":
 elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
     st.header(PAGES[selected_page])
     st.markdown("Hacim (Bardak, kaşık, ml, L) ve Ağırlık (Gram, kg) ölçülerini, seçtiğiniz malzemenin yoğunluğuna göre hassas bir şekilde çevirin. Çeviriler Türkiye mutfağı standartlarına uygundur.")
+
+    # Callback function to fetch suggestions automatically when text input changes (and focus leaves or Enter is pressed)
+    def fetch_converter_suggestions():
+        # Bu callback, st.text_input'tan focus ayrıldığında veya Enter'a basıldığında tetiklenir
+        input_value = st.session_state.get("convert_ingredient_input_key", "")
+        
+        # Eğer input doluysa, yeni önerileri getir.
+        if input_value:
+            st.session_state['converter_suggestions'] = get_suggestions_from_gemini(
+                input_value, 
+                api_key
+            )
+        # Eğer input boşsa, öneri listesini temizle.
+        elif not input_value:
+             st.session_state['converter_suggestions'] = []
+
 
     col7, col8 = st.columns([1, 2])
 
@@ -831,12 +909,33 @@ elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
                 key="convert_source_unit_select"
             )
 
-        # Malzeme Girişi (En kritik kısım)
-        ingredient_input = st.text_input(
-            "Malzeme (Zorunlu)", 
-            key="convert_ingredient_input",
-            placeholder="Örn: Buğday Unu, Toz Şeker, Tereyağı, Su"
-        )
+        
+        # YENİ: Öneri butonu kaldırıldı, on_change callback'i ile tetikleme yapılıyor.
+        input_container_converter = st.container()
+        
+        with input_container_converter:
+            # Malzeme Girişi (En kritik kısım) - on_change ile öneri tetikleniyor
+            ingredient_input_value = st.text_input(
+                "Malzeme (Zorunlu)", 
+                key="convert_ingredient_input_key", # Key'i ayarla
+                placeholder="Örn: Buğday Unu, Toz Şeker, Tereyağı, Su",
+                on_change=fetch_converter_suggestions, # Callback'i bağla
+            )
+            
+            # Öneri Listesi ve Seçim
+            if st.session_state.get('converter_suggestions'):
+                st.info("💡 Yazmayı bitirip Enter'a bastınız veya alandan çıktınız. İşte öneriler:")
+                selected_suggestion_converter = st.radio(
+                    "Önerilen Malzemelerden Birini Seçin:", 
+                    st.session_state['converter_suggestions'],
+                    key="select_converter_suggestion"
+                )
+                if selected_suggestion_converter:
+                    # Seçilen öneriyi st.session_state'e yaz
+                    st.session_state["convert_ingredient_input_key"] = selected_suggestion_converter
+                    st.session_state['converter_suggestions'] = [] # Seçim yapıldı, listeyi gizle
+                    st.rerun()
+
         
         # Hedef Birim Seçimi
         target_unit_select = st.selectbox(
@@ -845,7 +944,9 @@ elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
             key="convert_target_unit_select"
         )
 
-        is_converter_ready = bool(api_key and amount_input > 0 and ingredient_input)
+        # Güncel malzeme değeri session state'den okunur
+        current_ingredient = st.session_state.get("convert_ingredient_input_key")
+        is_converter_ready = bool(api_key and amount_input > 0 and current_ingredient)
 
         if st.button("⚖️ Hesapla ve Çevir", key="calculate_conversion_btn", disabled=not is_converter_ready, use_container_width=True):
             if is_converter_ready:
@@ -860,7 +961,7 @@ elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
                         )
                         
                         user_query_converter = (
-                            f"Lütfen '{amount_input} {source_unit_select}' miktarındaki '{ingredient_input}' malzemesini, "
+                            f"Lütfen '{amount_input} {source_unit_select}' miktarındaki '{current_ingredient}' malzemesini, "
                             f"'{target_unit_select}' birimine çevir. Çeviri yaparken lütfen Türkiye mutfak ölçütlerini (bardak, kaşık) referans al. "
                             f"Sonucu ve nedenini (kullanılan yoğunluk) açıklayarak ver."
                         )
@@ -898,11 +999,38 @@ elif selected_page == "🌡️ SAKLAMA REHBERİ":
     col9, col10 = st.columns([1, 2])
 
     with col9:
-        food_item = st.text_input(
-            "Hangi Yemeği/Gıdayı Soruyorsunuz?", 
-            key="food_item_storage_input",
-            placeholder="Örn: Fırında Tavuk Göğsü, Pişmiş Pirinç, Ev Yapımı Pesto Sosu"
-        )
+        # Öneri butonu için container
+        input_container_storage = st.container()
+        
+        with input_container_storage:
+            # Girdi Alanı
+            food_item = st.text_input(
+                "Hangi Yemeği/Gıdayı Soruyorsunuz?", 
+                key="food_item_storage_input",
+                placeholder="Örn: Fırında Tavuk Göğsü, Pişmiş Pirinç, Ev Yapımı Pesto Sosu"
+            )
+            
+            # Öneri Butonu
+            if st.button("💡 Öneri Al", key="get_storage_suggestions_btn", disabled=not (api_key and food_item)):
+                with st.spinner("Öneriler aranıyor..."):
+                    st.session_state['storage_suggestions'] = get_suggestions_from_gemini(
+                        food_item, 
+                        api_key
+                    )
+            
+            # Öneri Listesi ve Seçim
+            if st.session_state.get('storage_suggestions'):
+                selected_suggestion_storage = st.radio(
+                    "Önerilen Yemeklerden Birini Seçin:", 
+                    st.session_state['storage_suggestions'],
+                    key="select_storage_suggestion"
+                )
+                if selected_suggestion_storage:
+                    # Seçilen öneriyi text_input'a geri yaz ve state'i sıfırla
+                    st.session_state["food_item_storage_input"] = selected_suggestion_storage
+                    st.session_state['storage_suggestions'] = [] # Seçim yapıldı, listeyi gizle
+                    st.rerun()
+
         
         is_storage_ready = bool(api_key and food_item)
 
