@@ -32,7 +32,6 @@ def file_to_generative_part(uploaded_file):
 def call_gemini_api(parts_list, system_instruction, api_key):
     """
     Gemini API'ye istek gönderir ve yanıtı işler.
-    Bu fonksiyonda artık bekleme mesajı (st.info) gösterilmeyecektir.
     """
     if not api_key:
         raise ValueError("API Anahtarı bulunamadı.")
@@ -127,7 +126,7 @@ st.markdown("""
 
 st.title("👨‍🍳 Akıllı Mutfak Asistanınız")
 st.markdown("""
-    Yapay zekanın gücüyle mutfağınızı dönüştürün! Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır, elinizdeki malzemelerle yaratıcı yemekler önerir, ölçü birimi çevirileri yapar ve porsiyonları ayarlar.
+    Yapay zekanın gücüyle mutfağınızı dönüştürün! Gemini, yemek fotoğraflarınızı analiz eder, tarifler çıkarır, elinizdeki malzemelerle yaratıcı yemekler önerir, ölçü birimi çevirileri yapar, porsiyonları ayarlar ve tariflerinizi kaydeder!
 """)
 
 # ==============================================================================
@@ -145,6 +144,10 @@ if not api_key:
     st.warning("Lütfen Gemini API anahtarınızı `.streamlit/secrets.toml` dosyanıza `GEMINI_API_KEY` adıyla ekleyin.")
 # ==============================================================================
 
+# --- Oturum Durumu (Session State) Başlatma ---
+# Kaydedilen tarifler için oturum durumu listesi
+if 'saved_recipes' not in st.session_state:
+    st.session_state['saved_recipes'] = []
 
 # --- Yan Panel (Sidebar) Navigasyonu ---
 st.sidebar.title("🛠️ Mutfak Araçları")
@@ -154,7 +157,8 @@ PAGES = {
     "🍽️ Tarif DEDEKTÖRÜ": "Yemek Fotoğrafından Tarifi Çözümle",
     "🧊 DOLAP ŞEFİ": "Malzeme Fotoğrafından Yemek Önerileri",
     "♻️ TARİF UYARLAMA": "Tarif Uyarlama ve Değiştirme",
-    "± PORSİYON AYARLAYICI": "Tarif Porsiyonunu Otomatik Hesapla", # Yeni Özellik
+    "± PORSİYON AYARLAYICI": "Tarif Porsiyonunu Otomatik Hesapla",
+    "📒 TARİFLERİM": "Kayıtlı Tarifleriniz", # Yeni Özellik
     "🔄 MALZEME İKAMESİ": "Malzeme İkamesi Bulucu",
     "⚖️ ÖLÇÜ ÇEVİRİCİ": "Malzemeye Özel Ölçü Çevirici (Hacim 🔄 Ağırlık)"
 }
@@ -211,6 +215,21 @@ if selected_page == "🍽️ Tarif DEDEKTÖRÜ":
                             st.subheader("✅ Çözümlenen Tarif ve Analiz")
                             if result_text:
                                 st.markdown(result_text)
+                                st.session_state['last_recipe_output'] = result_text
+                                
+                                st.markdown("---")
+                                st.subheader("Kaydet")
+                                recipe_title = st.text_input("Tarif Başlığı (Kaydetmek için)", key="save_title_recipe_dedector", placeholder="Örn: Ev Yapımı Lazanya")
+                                if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_dedector_btn", disabled=not recipe_title):
+                                    if recipe_title:
+                                        st.session_state['saved_recipes'].append({
+                                            'title': recipe_title,
+                                            'content': result_text,
+                                            'source': 'Tarif Dedektörü'
+                                        })
+                                        st.success(f"'{recipe_title}' tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
+                                        # Input'u temizle
+                                        st.session_state["save_title_recipe_dedector"] = ""
                             else:
                                 st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
                                 
@@ -361,7 +380,7 @@ elif selected_page == "♻️ TARİF UYARLAMA":
                     </p>
                     """, unsafe_allow_html=True)
                  
-# --- 4. Porsiyon Ayarlayıcı Alanı (YENİ ÖZELLİK) ---
+# --- 4. Porsiyon Ayarlayıcı Alanı ---
 elif selected_page == "± PORSİYON AYARLAYICI":
     st.header(PAGES[selected_page])
     st.markdown("Bir tarifi mevcut porsiyon sayısıyla birlikte yapıştırın. Yapay zeka, istediğiniz yeni porsiyon sayısına göre tüm malzemeleri ve pişirme talimatlarını otomatik olarak güncellesin.")
@@ -415,6 +434,21 @@ elif selected_page == "± PORSİYON AYARLAYICI":
                              with st.container(border=True, height=500):
                                  if result_text_scale:
                                      st.markdown(result_text_scale)
+                                     st.session_state['last_scale_output'] = result_text_scale
+                                     
+                                     st.markdown("---")
+                                     st.subheader("Kaydet")
+                                     recipe_title_scale = st.text_input("Tarif Başlığı (Kaydetmek için)", key="save_title_recipe_scaler", placeholder="Örn: 8 Kişilik Tiramisu")
+                                     if st.button("💾 Bu Tarifi Kaydet", key="save_recipe_scaler_btn", disabled=not recipe_title_scale):
+                                        if recipe_title_scale:
+                                            st.session_state['saved_recipes'].append({
+                                                'title': recipe_title_scale,
+                                                'content': result_text_scale,
+                                                'source': f'Porsiyon Ayarlayıcı ({target_servings} Kişi)'
+                                            })
+                                            st.success(f"'{recipe_title_scale}' tarifi başarıyla kaydedildi! (Bu, oturum kapanana kadar geçerlidir.)")
+                                            # Input'u temizle
+                                            st.session_state["save_title_recipe_scaler"] = ""
                                  else:
                                      st.error("Üretim başarısız oldu. Lütfen hata mesajlarını kontrol edin.")
                         
@@ -435,8 +469,53 @@ elif selected_page == "± PORSİYON AYARLAYICI":
                     </p>
                     """, unsafe_allow_html=True)
 
+# --- 5. Tariflerim Alanı (YENİ ÖZELLİK) ---
+elif selected_page == "📒 TARİFLERİM":
+    st.header(PAGES[selected_page])
+    st.markdown("Kaydettiğiniz tarifleri buradan görüntüleyebilir ve yönetebilirsiniz.")
+    st.warning("🚨 **ÖNEMLİ NOT:** Bu özellik, Streamlit'in kısıtlamaları nedeniyle tarifleri yalnızca **mevcut tarayıcı oturumunuz süresince** saklar. Tarayıcı sekmesini kapattığınızda veya uygulamayı yenilediğinizde tarifler kaybolacaktır.")
+    
+    if not st.session_state.get('saved_recipes'):
+        st.info("Henüz kaydedilmiş bir tarifiniz bulunmuyor. 'Tarif Dedektörü' veya 'Porsiyon Ayarlayıcı' sekmelerinde bir tarif oluşturup kaydedebilirsiniz.")
+    else:
+        st.subheader(f"Toplam {len(st.session_state['saved_recipes'])} Kayıtlı Tarif")
+        
+        # Gösterilecek tarifi seçmek için Selectbox
+        recipe_titles = [f"{i+1}. {r['title']} (Kaynak: {r['source']})" for i, r in enumerate(st.session_state['saved_recipes'])]
+        
+        # Eğer liste boş değilse (ki bu kontrol yukarıda yapıldı, ama yine de güvenliğe alalım)
+        if recipe_titles:
+            selected_recipe_index = st.selectbox(
+                "Görüntülenecek Tarifi Seçin", 
+                range(len(st.session_state['saved_recipes'])), 
+                format_func=lambda i: recipe_titles[i], 
+                key="recipe_viewer_select"
+            )
+            
+            # Seçilen tarifin içeriğini gösterme
+            if selected_recipe_index is not None:
+                selected_recipe = st.session_state['saved_recipes'][selected_recipe_index]
+                
+                st.markdown("---")
+                st.title(selected_recipe['title'])
+                st.markdown(f"**Kaynak:** *{selected_recipe['source']}*")
+                st.markdown("---")
+                
+                # Tarif içeriği
+                with st.container(border=True):
+                    st.markdown(selected_recipe['content'])
+                
+                st.markdown("---")
+                
+                # Silme butonu
+                if st.button(f"🗑️ '{selected_recipe['title']}' Tarifini Sil", key="delete_recipe_btn", type="primary"):
+                    # Silme işlemi
+                    del st.session_state['saved_recipes'][selected_recipe_index]
+                    st.success(f"'{selected_recipe['title']}' tarifi başarıyla silindi.")
+                    # Listeyi yenilemek için uygulamayı yeniden çalıştır
+                    st.rerun() 
 
-# --- 5. Malzeme İkamesi Alanı ---
+# --- 6. Malzeme İkamesi Alanı ---
 elif selected_page == "🔄 MALZEME İKAMESİ":
     st.header(PAGES[selected_page])
     st.markdown("Elinizde olmayan veya kullanmak istemediğiniz bir malzeme için en iyi ikameleri, kullanım amaçlarına göre oranlarıyla birlikte öğrenin.")
@@ -493,7 +572,7 @@ elif selected_page == "🔄 MALZEME İKAMESİ":
                     """, unsafe_allow_html=True)
 
 
-# --- 6. Ölçü Çevirici Alanı (ÇİFT YÖNLÜ ve TR BAZLI) ---
+# --- 7. Ölçü Çevirici Alanı (ÇİFT YÖNLÜ ve TR BAZLI) ---
 elif selected_page == "⚖️ ÖLÇÜ ÇEVİRİCİ":
     st.header(PAGES[selected_page])
     st.markdown("Hacim (Bardak, kaşık, ml, L) ve Ağırlık (Gram, kg) ölçülerini, seçtiğiniz malzemenin yoğunluğuna göre hassas bir şekilde çevirin. Çeviriler Türkiye mutfağı standartlarına uygundur.")
